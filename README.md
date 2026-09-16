@@ -1,4 +1,4 @@
-# Transacao
+# Acesso Remoto
 
 Aplicativo Java (Swing, sem Maven/Gradle) com dois papeis, **Servidor** e **Client**, que juntos oferecem transferencia de arquivos, acesso remoto (tela, mouse, teclado), audio e atualizacao automatica sobre uma unica conexao TLS com autenticacao mutua.
 
