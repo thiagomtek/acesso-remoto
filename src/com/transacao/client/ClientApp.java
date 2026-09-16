@@ -98,6 +98,7 @@ public class ClientApp extends JFrame {
     public ClientApp() {
         super("Transacao - Client");
         buildUi();
+        initSystemTray();
         wireActions();
         updateConnectionState(false);
         initStartupCheckbox();
@@ -828,11 +829,78 @@ public class ClientApp extends JFrame {
         }
     }
 
+    private TrayIcon trayIcon;
+
+    private void initSystemTray() {
+        if (!SystemTray.isSupported()) {
+            return;
+        }
+        try {
+            SystemTray tray = SystemTray.getSystemTray();
+            Image iconImage = createTrayIcon();
+
+            PopupMenu popup = new PopupMenu();
+            MenuItem openItem = new MenuItem("Abrir Transacao Client");
+            openItem.addActionListener(e -> showWindow());
+
+            MenuItem exitItem = new MenuItem("Sair");
+            exitItem.addActionListener(e -> {
+                disconnect();
+                System.exit(0);
+            });
+
+            popup.add(openItem);
+            popup.addSeparator();
+            popup.add(exitItem);
+
+            trayIcon = new TrayIcon(iconImage, "Transacao - Client", popup);
+            trayIcon.setImageAutoSize(true);
+            trayIcon.addActionListener(e -> showWindow());
+            tray.add(trayIcon);
+            setDefaultCloseOperation(JFrame.HIDE_ON_CLOSE);
+        } catch (Exception ex) {
+            log("Aviso: Nao foi possivel registrar icone na bandeja do sistema: " + ex.getMessage());
+        }
+    }
+
+    private void showWindow() {
+        SwingUtilities.invokeLater(() -> {
+            setVisible(true);
+            setExtendedState(JFrame.NORMAL);
+            toFront();
+            requestFocus();
+        });
+    }
+
+    private static Image createTrayIcon() {
+        java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(16, 16, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g2 = img.createGraphics();
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g2.setColor(new Color(0, 120, 215));
+        g2.fillRoundRect(0, 0, 16, 16, 4, 4);
+        g2.setColor(Color.WHITE);
+        g2.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
+        g2.drawString("T", 4, 12);
+        g2.dispose();
+        return img;
+    }
+
     /** Hash SHA-256 da senha exigida so na primeira vez que o app e aberto neste perfil do Windows. */
     private static final String FIRST_RUN_PASSWORD_HASH =
             "33d8409460375496ba3f9fc38626c31f511c1243a56ac1f590c6c07e302e28be";
 
     public static void main(String[] args) {
+        boolean isBackground = false;
+        if (args != null) {
+            for (String arg : args) {
+                if ("--background".equalsIgnoreCase(arg) || "--silent".equalsIgnoreCase(arg)
+                        || "--hidden".equalsIgnoreCase(arg) || "-b".equalsIgnoreCase(arg)) {
+                    isBackground = true;
+                    break;
+                }
+            }
+        }
+        final boolean background = isBackground;
         SwingUtilities.invokeLater(() -> {
             if (!FirstRunGate.isActivated(STARTUP_APP_NAME) && !promptForFirstRunPassword()) {
                 System.exit(0);
@@ -840,7 +908,9 @@ public class ClientApp extends JFrame {
             }
             ClientApp app = new ClientApp();
             app.disconnectButton.setEnabled(false);
-            app.setVisible(true);
+            if (!background) {
+                app.setVisible(true);
+            }
         });
     }
 

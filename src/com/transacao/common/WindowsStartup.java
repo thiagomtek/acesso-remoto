@@ -47,7 +47,7 @@ public final class WindowsStartup {
         File javawExe = new File(javaHome, "bin\\javaw.exe");
         String javaExecutable = javawExe.exists() ? javawExe.getAbsolutePath() : "java";
 
-        String command = "\"" + javaExecutable + "\" -jar \"" + jarFile.getAbsolutePath() + "\"";
+        String command = "\"" + javaExecutable + "\" -jar \"" + jarFile.getAbsolutePath() + "\" --background";
         String escapedCommand = command.replace("\"", "\"\"");
         String vbs = "Set shell = CreateObject(\"WScript.Shell\")\r\n"
                 + "shell.CurrentDirectory = \"" + jarFile.getParentFile().getAbsolutePath().replace("\"", "\"\"") + "\"\r\n"

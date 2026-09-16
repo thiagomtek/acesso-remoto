@@ -38,7 +38,7 @@ public final class SelfUpdater {
             writer.println("del \"" + currentJar.getAbsolutePath() + "\" 2>nul");
             writer.println("if exist \"" + currentJar.getAbsolutePath() + "\" goto retry");
             writer.println("move /y \"" + newJarTemp.getAbsolutePath() + "\" \"" + currentJar.getAbsolutePath() + "\"");
-            writer.println("start \"\" \"" + javaExecutable + "\" -jar \"" + currentJar.getAbsolutePath() + "\"");
+            writer.println("start \"\" \"" + javaExecutable + "\" -jar \"" + currentJar.getAbsolutePath() + "\" --background");
             // Auto-apagar o proprio .bat sem o erro "nao e possivel encontrar o
             // arquivo em lotes": o "(goto) 2>nul" forca o cmd a terminar de ler
             // o script inteiro antes de tentar apagar o arquivo.
