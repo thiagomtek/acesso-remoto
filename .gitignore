@@ -1,0 +1,18 @@
+# Build output
+out/
+dist/
+*.jar
+
+# Certificados/keystores gerados localmente (contem chaves privadas)
+certs/*.jks
+certs/*.cer
+
+# Pastas de arquivos recebidos em testes locais
+recebidos_client/
+recebidos_server/
+
+# Config local do editor/ferramentas
+.claude/
+.vscode/
+.idea/
+*.iml
