@@ -14,9 +14,14 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.function.Consumer;
 
+import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
+import javax.imageio.stream.MemoryCacheImageOutputStream;
 
 /**
  * Captura a tela local (java.awt.Robot) e envia, pela conexao ja
@@ -37,6 +42,8 @@ public class ScreenStreamer implements Runnable {
     private volatile boolean running = true;
     private volatile Consumer<String> errorListener;
     private BufferedImage previousFrame;
+    private final ImageWriter pngWriter;
+    private final ImageWriteParam pngWriteParam;
 
     public ScreenStreamer(DataOutputStream out, Object writeLock) throws AWTException {
         this.out = out;
@@ -50,6 +57,18 @@ public class ScreenStreamer implements Runnable {
         DisplayMode mode = device.getDisplayMode();
         this.screenRect = new Rectangle(0, 0, mode.getWidth(), mode.getHeight());
         this.dpiScale = device.getDefaultConfiguration().getDefaultTransform().getScaleX();
+
+        Iterator<ImageWriter> writers = ImageIO.getImageWritersByFormatName("png");
+        this.pngWriter = writers.hasNext() ? writers.next() : null;
+        ImageWriteParam param = pngWriter != null ? pngWriter.getDefaultWriteParam() : null;
+        if (param != null && param.canWriteCompressed()) {
+            // PNG e sempre sem perdas - a "qualidade" aqui so controla o nivel de
+            // compressao (deflate). Como banda nao e o gargalo, usamos o nivel mais
+            // rapido para nao travar a transmissao esperando a compressao terminar.
+            param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+            param.setCompressionQuality(0.0f);
+        }
+        this.pngWriteParam = param;
     }
 
     public Dimension getScreenSize() {
@@ -135,8 +154,16 @@ public class ScreenStreamer implements Runnable {
     }
 
     private byte[] encodePng(BufferedImage image) throws IOException {
+        if (pngWriter == null) {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ImageIO.write(image, "png", baos);
+            return baos.toByteArray();
+        }
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        ImageIO.write(image, "png", baos);
+        try (MemoryCacheImageOutputStream ios = new MemoryCacheImageOutputStream(baos)) {
+            pngWriter.setOutput(ios);
+            pngWriter.write(null, new IIOImage(image, null, null), pngWriteParam);
+        }
         return baos.toByteArray();
     }
 }
