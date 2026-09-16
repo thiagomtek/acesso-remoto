@@ -22,6 +22,7 @@ import com.transacao.common.remote.ClipboardSync;
 import com.transacao.common.remote.InputInjector;
 import com.transacao.common.remote.RemoteControlListener;
 import com.transacao.common.remote.RemoteMessageSender;
+import com.transacao.common.remote.ScreenKeepAlive;
 import com.transacao.common.remote.ScreenStreamer;
 
 import javax.net.ssl.SSLContext;
@@ -53,6 +54,7 @@ public class ClientApp extends JFrame {
     private final JButton disconnectButton = new JButton("Desconectar");
     private final JButton discoverButton = new JButton("Buscar servidor na rede");
     private final JCheckBox startWithWindowsCheck = new JCheckBox("Iniciar com o Windows (neste usuario)");
+    private final JCheckBox keepAliveCheck = new JCheckBox("Manter computador ativo (anti-suspensao com CapsLock a cada 5 min)", true);
     private final JButton chooseButton = new JButton("Selecionar arquivo .zip ou pasta...");
     private final JButton sendButton = new JButton("Enviar");
     private final JLabel selectedLabel = new JLabel("Nada selecionado");
@@ -88,6 +90,8 @@ public class ClientApp extends JFrame {
     private Thread sysAudioStreamerThread;
     private DiscoveryClient discoveryClient;
     private Thread discoveryThread;
+    private ScreenKeepAlive keepAlive;
+    private Thread keepAliveThread;
 
     private static final String STARTUP_APP_NAME = "TransacaoClient";
 
@@ -97,6 +101,9 @@ public class ClientApp extends JFrame {
         wireActions();
         updateConnectionState(false);
         initStartupCheckbox();
+        if (keepAliveCheck.isSelected()) {
+            startKeepAlive();
+        }
         startDiscovery();
     }
 
@@ -139,8 +146,9 @@ public class ClientApp extends JFrame {
         controlPanel.add(discoverButton);
         controlPanel.add(statusLabel);
 
-        JPanel startupPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JPanel startupPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 2));
         startupPanel.add(startWithWindowsCheck);
+        startupPanel.add(keepAliveCheck);
 
         JPanel sendPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         sendPanel.add(chooseButton);
@@ -268,6 +276,14 @@ public class ClientApp extends JFrame {
         sysAudioStopButton.addActionListener(e -> stopSysAudio());
         sysAudioStartButton.setEnabled(false);
         sysAudioStopButton.setEnabled(false);
+
+        keepAliveCheck.addActionListener(e -> {
+            if (keepAliveCheck.isSelected()) {
+                startKeepAlive();
+            } else {
+                stopKeepAlive();
+            }
+        });
     }
 
     private void stopDiscovery(String logMessage) {
@@ -342,6 +358,29 @@ public class ClientApp extends JFrame {
                 log("Inicio automatico com o Windows desativado.");
             }
         });
+    }
+
+    private void startKeepAlive() {
+        if (keepAlive != null) {
+            return;
+        }
+        keepAlive = new ScreenKeepAlive(this::log);
+        keepAliveThread = new Thread(keepAlive, "screen-keepalive");
+        keepAliveThread.setDaemon(true);
+        keepAliveThread.start();
+        log("Anti-suspensao ativo: simulando CapsLock a cada 5 minutos para evitar suspensao/inatividade.");
+    }
+
+    private void stopKeepAlive() {
+        if (keepAlive != null) {
+            keepAlive.stop();
+            if (keepAliveThread != null) {
+                keepAliveThread.interrupt();
+            }
+            keepAlive = null;
+            keepAliveThread = null;
+            log("Anti-suspensao desativado.");
+        }
     }
 
     private String currentJarHash() {
@@ -475,7 +514,9 @@ public class ClientApp extends JFrame {
 
                         @Override
                         public void onMouseMove(int x, int y) {
-                            withInjector(injector -> injector.moveMouse(x, y));
+                            int originX = screenStreamer != null ? screenStreamer.getScreenOriginX() : 0;
+                            int originY = screenStreamer != null ? screenStreamer.getScreenOriginY() : 0;
+                            withInjector(injector -> injector.moveMouse(originX + x, originY + y));
                         }
 
                         @Override
@@ -669,7 +710,7 @@ public class ClientApp extends JFrame {
             screenStreamerThread.setDaemon(true);
             screenStreamerThread.start();
             SwingUtilities.invokeLater(() -> remoteStatusLabel.setText("Compartilhando tela"));
-            log("Iniciando compartilhamento de tela. Resolucao fisica: " + screenStreamer.getScreenSize().width
+            log("Iniciando compartilhamento de tela. Resolucao: " + screenStreamer.getScreenSize().width
                     + "x" + screenStreamer.getScreenSize().height
                     + " (escala do Windows detectada: " + Math.round(screenStreamer.getDpiScale() * 100) + "%)");
         } catch (Exception ex) {

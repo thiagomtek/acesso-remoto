@@ -49,14 +49,10 @@ public class ScreenStreamer implements Runnable {
         this.out = out;
         this.writeLock = writeLock;
         this.robot = new Robot();
-        // Usa o DisplayMode do dispositivo grafico (resolucao FISICA real),
-        // em vez de Toolkit.getScreenSize() (que em alguns ambientes retorna
-        // o tamanho LOGICO reduzido pelo fator de escala do Windows,
-        // deixando a captura borrada mesmo com boa compressao).
         GraphicsDevice device = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
-        DisplayMode mode = device.getDisplayMode();
-        this.screenRect = new Rectangle(0, 0, mode.getWidth(), mode.getHeight());
-        this.dpiScale = device.getDefaultConfiguration().getDefaultTransform().getScaleX();
+        java.awt.GraphicsConfiguration gc = device.getDefaultConfiguration();
+        this.screenRect = gc.getBounds();
+        this.dpiScale = gc.getDefaultTransform().getScaleX();
 
         Iterator<ImageWriter> writers = ImageIO.getImageWritersByFormatName("png");
         this.pngWriter = writers.hasNext() ? writers.next() : null;
@@ -72,7 +68,15 @@ public class ScreenStreamer implements Runnable {
     }
 
     public Dimension getScreenSize() {
-        return screenRect.getSize();
+        return new Dimension(screenRect.width, screenRect.height);
+    }
+
+    public int getScreenOriginX() {
+        return screenRect.x;
+    }
+
+    public int getScreenOriginY() {
+        return screenRect.y;
     }
 
     /** Fator de escala do Windows detectado (1.0 = 100%, 1.25 = 125%, etc). */

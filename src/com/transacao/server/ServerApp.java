@@ -49,7 +49,7 @@ public class ServerApp extends JFrame {
     private final JTextField truststoreField = new JTextField("certs/server-truststore.jks", 22);
     private final JPasswordField truststorePassField = new JPasswordField("changeit", 10);
     private final JTextField outputDirField = new JTextField("recebidos_server", 22);
-    private final JTextField updateJarField = new JTextField("../Client/transacao-client.jar", 22);
+    private final JTextField updateJarField = new JTextField(resolveDefaultUpdateJar(), 22);
 
     private final JButton startButton = new JButton("Iniciar servidor");
     private final JButton stopButton = new JButton("Parar servidor");
@@ -117,7 +117,7 @@ public class ServerApp extends JFrame {
         tabs.addTab("Audio", buildAudioTab());
         add(tabs, BorderLayout.CENTER);
 
-        setSize(960, 680);
+        setSize(1200, 800);
         setLocationRelativeTo(null);
         setExtendedState(JFrame.MAXIMIZED_BOTH);
     }
@@ -793,6 +793,24 @@ public class ServerApp extends JFrame {
                 log("Transferencia concluida: " + description);
             });
         }
+    }
+
+    private static String resolveDefaultUpdateJar() {
+        String[] candidates = {
+                "updates/transacao-client.jar",
+                "transacao-client.jar",
+                "../Client/transacao-client.jar",
+                "dist/updates/transacao-client.jar",
+                "dist/transacao-client.jar",
+                "../dist/updates/transacao-client.jar",
+                "../dist/transacao-client.jar"
+        };
+        for (String c : candidates) {
+            if (new File(c).isFile()) {
+                return c;
+            }
+        }
+        return "updates/transacao-client.jar";
     }
 
     public static void main(String[] args) {
