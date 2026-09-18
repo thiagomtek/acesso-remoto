@@ -54,7 +54,7 @@ public class ClientApp extends JFrame {
     private final JButton disconnectButton = new JButton("Desconectar");
     private final JButton discoverButton = new JButton("Buscar servidor na rede");
     private final JCheckBox startWithWindowsCheck = new JCheckBox("Iniciar com o Windows (neste usuario)");
-    private final JCheckBox keepAliveCheck = new JCheckBox("Manter computador ativo (anti-suspensao com CapsLock a cada 5 min)", true);
+    private final JCheckBox keepAliveCheck = new JCheckBox("Manter computador ativo (anti-suspensao com CapsLock a cada 5 min)", false);
     private final JButton chooseButton = new JButton("Selecionar arquivo .zip ou pasta...");
     private final JButton sendButton = new JButton("Enviar");
     private final JLabel selectedLabel = new JLabel("Nada selecionado");

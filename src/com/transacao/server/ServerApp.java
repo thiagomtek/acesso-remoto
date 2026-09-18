@@ -117,9 +117,13 @@ public class ServerApp extends JFrame {
         tabs.addTab("Audio", buildAudioTab());
         add(tabs, BorderLayout.CENTER);
 
-        setSize(1200, 800);
-        setLocationRelativeTo(null);
-        setExtendedState(JFrame.MAXIMIZED_BOTH);
+        // Usa a resolucao FISICA do monitor (igual ao ScreenStreamer), em vez de
+        // setExtendedState(MAXIMIZED_BOTH) - em maquinas com escala do Windows
+        // diferente de 100%, o "maximizado" do Swing pode calcular o tamanho em
+        // pixels logicos (menores), deixando sobra de tela nao coberta pela janela.
+        GraphicsDevice device = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
+        DisplayMode mode = device.getDisplayMode();
+        setBounds(0, 0, mode.getWidth(), mode.getHeight());
     }
 
     private JPanel buildTransferTab() {
