@@ -22,4 +22,6 @@ public interface RemoteControlListener {
     void onKeyPress(int keyCode);
 
     void onKeyRelease(int keyCode);
+
+    void onKeyTyped(char c);
 }

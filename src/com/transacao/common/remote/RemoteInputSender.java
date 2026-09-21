@@ -17,4 +17,6 @@ public interface RemoteInputSender {
     void sendKeyPress(int keyCode);
 
     void sendKeyRelease(int keyCode);
+
+    void sendKeyTyped(char c);
 }

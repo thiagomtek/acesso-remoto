@@ -92,6 +92,14 @@ public final class RemoteMessageSender {
         }
     }
 
+    public static void sendKeyTyped(DataOutputStream out, Object writeLock, char c) throws IOException {
+        synchronized (writeLock) {
+            out.writeByte(Protocol.REMOTE_KEY_TYPED);
+            out.writeChar(c);
+            out.flush();
+        }
+    }
+
     public static void sendClipboardText(DataOutputStream out, Object writeLock, String text) throws IOException {
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
         synchronized (writeLock) {

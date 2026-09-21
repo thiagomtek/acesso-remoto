@@ -235,6 +235,13 @@ public class FileTransferReceiver implements Runnable {
                 }
                 return true;
             }
+            case Protocol.REMOTE_KEY_TYPED: {
+                char c = in.readChar();
+                if (remoteControlListener != null) {
+                    remoteControlListener.onKeyTyped(c);
+                }
+                return true;
+            }
             case Protocol.REMOTE_CLIPBOARD_TEXT: {
                 int length = in.readInt();
                 byte[] bytes = new byte[length];

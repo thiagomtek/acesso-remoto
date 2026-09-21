@@ -544,6 +544,11 @@ public class ClientApp extends JFrame {
                         public void onKeyRelease(int keyCode) {
                             withInjector(injector -> injector.keyRelease(keyCode));
                         }
+
+                        @Override
+                        public void onKeyTyped(char c) {
+                            withInjector(injector -> injector.typeChar(c));
+                        }
                     });
                     clipboardSync = new ClipboardSync(new ClipboardSync.Sender() {
                         @Override

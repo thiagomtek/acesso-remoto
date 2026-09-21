@@ -299,6 +299,11 @@ public class ServerApp extends JFrame {
             public void sendKeyRelease(int keyCode) {
                 trySendRemote(o -> RemoteMessageSender.sendKeyRelease(out, writeLock, keyCode));
             }
+
+            @Override
+            public void sendKeyTyped(char c) {
+                trySendRemote(o -> RemoteMessageSender.sendKeyTyped(out, writeLock, c));
+            }
         });
     }
 

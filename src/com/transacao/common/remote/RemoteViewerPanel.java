@@ -130,18 +130,97 @@ public class RemoteViewerPanel extends JPanel {
         addKeyListener(new KeyAdapter() {
             @Override
             public void keyPressed(KeyEvent e) {
-                if (sender != null) {
-                    sender.sendKeyPress(e.getKeyCode());
+                if (sender == null) {
+                    return;
+                }
+                int code = normalizeKeyCode(e);
+                if (isSpecialOrShortcutKey(e, code)) {
+                    sender.sendKeyPress(code);
                 }
             }
 
             @Override
             public void keyReleased(KeyEvent e) {
-                if (sender != null) {
-                    sender.sendKeyRelease(e.getKeyCode());
+                if (sender == null) {
+                    return;
+                }
+                int code = normalizeKeyCode(e);
+                if (isSpecialOrShortcutKey(e, code)) {
+                    sender.sendKeyRelease(code);
+                }
+            }
+
+            @Override
+            public void keyTyped(KeyEvent e) {
+                if (sender == null) {
+                    return;
+                }
+                char c = e.getKeyChar();
+                if (c == '\b' || c == '\t' || c == '\n' || c == 27 || c == 127 || c == KeyEvent.CHAR_UNDEFINED) {
+                    return;
+                }
+                if (!e.isControlDown() && !e.isAltDown() && !e.isMetaDown()) {
+                    sender.sendKeyTyped(c);
                 }
             }
         });
+    }
+
+    private int normalizeKeyCode(KeyEvent e) {
+        int code = e.getKeyCode();
+        if (code == KeyEvent.VK_META) {
+            return KeyEvent.VK_CONTROL;
+        }
+        return code;
+    }
+
+    private boolean isSpecialOrShortcutKey(KeyEvent e, int code) {
+        if (e.isControlDown() || e.isAltDown() || e.isMetaDown()) {
+            return true;
+        }
+        switch (code) {
+            case KeyEvent.VK_CONTROL:
+            case KeyEvent.VK_ALT:
+            case KeyEvent.VK_SHIFT:
+            case KeyEvent.VK_META:
+            case KeyEvent.VK_ALT_GRAPH:
+            case KeyEvent.VK_WINDOWS:
+            case KeyEvent.VK_CONTEXT_MENU:
+            case KeyEvent.VK_ENTER:
+            case KeyEvent.VK_BACK_SPACE:
+            case KeyEvent.VK_TAB:
+            case KeyEvent.VK_ESCAPE:
+            case KeyEvent.VK_DELETE:
+            case KeyEvent.VK_INSERT:
+            case KeyEvent.VK_HOME:
+            case KeyEvent.VK_END:
+            case KeyEvent.VK_PAGE_UP:
+            case KeyEvent.VK_PAGE_DOWN:
+            case KeyEvent.VK_UP:
+            case KeyEvent.VK_DOWN:
+            case KeyEvent.VK_LEFT:
+            case KeyEvent.VK_RIGHT:
+            case KeyEvent.VK_CAPS_LOCK:
+            case KeyEvent.VK_NUM_LOCK:
+            case KeyEvent.VK_SCROLL_LOCK:
+            case KeyEvent.VK_PRINTSCREEN:
+            case KeyEvent.VK_PAUSE:
+            case KeyEvent.VK_F1:
+            case KeyEvent.VK_F2:
+            case KeyEvent.VK_F3:
+            case KeyEvent.VK_F4:
+            case KeyEvent.VK_F5:
+            case KeyEvent.VK_F6:
+            case KeyEvent.VK_F7:
+            case KeyEvent.VK_F8:
+            case KeyEvent.VK_F9:
+            case KeyEvent.VK_F10:
+            case KeyEvent.VK_F11:
+            case KeyEvent.VK_F12:
+                return true;
+            default:
+                return false;
+        }
     }
 
     private Point toRemote(Point local) {

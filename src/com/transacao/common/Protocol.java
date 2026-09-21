@@ -44,6 +44,9 @@ public final class Protocol {
     /** Evento de teclado: soltar tecla. */
     public static final byte REMOTE_KEY_RELEASE = 25;
 
+    /** Evento de teclado: caractere Unicode digitado (1:1). */
+    public static final byte REMOTE_KEY_TYPED = 28;
+
     /** Sincronizacao de area de transferencia: texto copiado. */
     public static final byte REMOTE_CLIPBOARD_TEXT = 26;
 
