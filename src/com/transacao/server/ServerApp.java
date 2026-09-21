@@ -43,7 +43,7 @@ import com.transacao.common.Protocol;
  */
 public class ServerApp extends JFrame {
 
-    private final JTextField portField = new JTextField("9443", 6);
+    private final JTextField portField = new JTextField("9444", 6);
     private final JTextField keystoreField = new JTextField("certs/server.jks", 22);
     private final JPasswordField keystorePassField = new JPasswordField("changeit", 10);
     private final JTextField truststoreField = new JTextField("certs/server-truststore.jks", 22);

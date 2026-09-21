@@ -43,7 +43,7 @@ import java.io.File;
 public class ClientApp extends JFrame {
 
     private final JTextField hostField = new JTextField("localhost", 14);
-    private final JTextField portField = new JTextField("9443", 6);
+    private final JTextField portField = new JTextField("9444", 6);
     private final JTextField keystoreField = new JTextField("certs/client.jks", 22);
     private final JPasswordField keystorePassField = new JPasswordField("changeit", 10);
     private final JTextField truststoreField = new JTextField("certs/client-truststore.jks", 22);
@@ -474,7 +474,10 @@ public class ClientApp extends JFrame {
 
                     SSLSocketFactory factory = context.getSocketFactory();
                     int port = Integer.parseInt(portField.getText().trim());
-                    SSLSocket s = (SSLSocket) factory.createSocket(hostField.getText().trim(), port);
+                    String host = hostField.getText().trim();
+                    java.net.Socket plainSocket = new java.net.Socket();
+                    plainSocket.connect(new java.net.InetSocketAddress(host, port), 5000);
+                    SSLSocket s = (SSLSocket) factory.createSocket(plainSocket, host, port, true);
                     s.startHandshake();
                     socket = s;
                     out = new DataOutputStream(s.getOutputStream());

@@ -111,10 +111,10 @@ Depois de conectado, em qualquer uma das duas janelas: "Selecionar arquivo .zip 
 
 ## Liberar as portas no firewall (maquina servidor)
 
-Se client e servidor estiverem em maquinas diferentes na mesma rede/VPN, libere as portas no Firewall do Windows na maquina servidor: a porta TCP configurada para a conexao (padrao 9443) e a porta UDP de descoberta automatica (9445).
+Se client e servidor estiverem em maquinas diferentes na mesma rede/VPN, libere as portas no Firewall do Windows na maquina servidor: a porta TCP configurada para a conexao (padrao 9444) e a porta UDP de descoberta automatica (9445).
 
 ```powershell
-New-NetFirewallRule -DisplayName "Transacao SSL" -Direction Inbound -Protocol TCP -LocalPort 9443 -Action Allow
+New-NetFirewallRule -DisplayName "Transacao SSL" -Direction Inbound -Protocol TCP -LocalPort 9444 -Action Allow
 New-NetFirewallRule -DisplayName "Transacao Discovery" -Direction Inbound -Protocol UDP -LocalPort 9445 -Action Allow
 ```
 
