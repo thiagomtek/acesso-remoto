@@ -807,10 +807,12 @@ public class ServerApp extends JFrame {
     private static String resolveDefaultUpdateJar() {
         String[] candidates = {
                 "updates/transacao-client.jar",
-                "transacao-client.jar",
                 "../Client/transacao-client.jar",
+                "dist/Server/updates/transacao-client.jar",
+                "dist/Client/transacao-client.jar",
                 "dist/updates/transacao-client.jar",
                 "dist/transacao-client.jar",
+                "transacao-client.jar",
                 "../dist/updates/transacao-client.jar",
                 "../dist/transacao-client.jar"
         };

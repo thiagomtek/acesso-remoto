@@ -1,66 +1,52 @@
-# Empacota as classes compiladas em out/ como jars executaveis (server e client),
-# organiza a estrutura completa da pasta dist e gera o pacote zip de primeira instalacao do client.
+# Compila e organiza os pacotes finais na pasta dist de forma limpa e modular.
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $here
 
-# Sempre compila antes de empacotar para garantir que as alteracoes estejam no jar
+# 1. Compila os fontes para a pasta out/
 Write-Host "Compilando fontes..."
 & .\compile.ps1
 
-# Cria pastas necessarias na raiz de dist
+# 2. Limpa e recria a estrutura da pasta dist/
+Write-Host "Organizando estrutura da pasta dist..."
+if (Test-Path "dist") {
+    Remove-Item -Path "dist" -Recurse -Force
+}
+
 $distDirs = @(
-    "dist",
-    "dist\certs",
-    "dist\updates",
-    "dist\Server",
     "dist\Server\certs",
     "dist\Server\updates",
-    "dist\Client",
     "dist\Client\certs"
 )
 foreach ($dir in $distDirs) {
-    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
 }
 
-# 1. Gera os JARs executaveis na raiz de dist
+# 3. Empacota os JARs executaveis diretamente nas pastas correspondentes
 Push-Location out
-jar --create --file ..\dist\transacao-server.jar --main-class com.transacao.server.ServerApp com\transacao\common com\transacao\server
-jar --create --file ..\dist\transacao-client.jar --main-class com.transacao.client.ClientApp com\transacao\common com\transacao\client
+jar --create --file ..\dist\Server\transacao-server.jar --main-class com.transacao.server.ServerApp com\transacao\common com\transacao\server
+jar --create --file ..\dist\Client\transacao-client.jar --main-class com.transacao.client.ClientApp com\transacao\common com\transacao\client
 Pop-Location
 
-# 2. Copia os JARs para as pastas dedicadas (Server / Client) e pasta de updates (para auto-atualizacao)
-Copy-Item "dist\transacao-server.jar" "dist\Server\transacao-server.jar" -Force
-Copy-Item "dist\transacao-client.jar" "dist\Client\transacao-client.jar" -Force
-Copy-Item "dist\transacao-client.jar" "dist\updates\transacao-client.jar" -Force
-Copy-Item "dist\transacao-client.jar" "dist\Server\updates\transacao-client.jar" -Force
+# 4. Copia o JAR do client para a pasta de atualizacoes do servidor (auto-update)
+Copy-Item "dist\Client\transacao-client.jar" "dist\Server\updates\transacao-client.jar" -Force
 
-# 3. Copia certificados para dist\certs, dist\Server\certs e dist\Client\certs
+# 5. Copia os certificados especificos de cada lado
 if (Test-Path "certs") {
-    Copy-Item "certs\*" "dist\certs\" -Recurse -Force
-    
-    # Server certs
+    # Certificados do Servidor
     if (Test-Path "certs\server.jks") { Copy-Item "certs\server.jks" "dist\Server\certs\" -Force }
     if (Test-Path "certs\server-truststore.jks") { Copy-Item "certs\server-truststore.jks" "dist\Server\certs\" -Force }
-    if (Test-Path "certs\server.cer") { Copy-Item "certs\server.cer" "dist\Server\certs\" -Force }
     
-    # Client certs
+    # Certificados do Client
     if (Test-Path "certs\client.jks") { Copy-Item "certs\client.jks" "dist\Client\certs\" -Force }
     if (Test-Path "certs\client-truststore.jks") { Copy-Item "certs\client-truststore.jks" "dist\Client\certs\" -Force }
-    if (Test-Path "certs\client.cer") { Copy-Item "certs\client.cer" "dist\Client\certs\" -Force }
 }
 
-# 4. Conteudo dos scripts de inicializacao .bat e .vbs
+# 6. Scripts de inicializacao para o Servidor
 $batServer = @"
 @echo off
 cd /d "%~dp0"
 start "" javaw -jar transacao-server.jar
-"@
-
-$batClient = @"
-@echo off
-cd /d "%~dp0"
-start "" javaw -jar transacao-client.jar
 "@
 
 $batServerConsole = @"
@@ -68,6 +54,16 @@ $batServerConsole = @"
 cd /d "%~dp0"
 java -jar transacao-server.jar
 pause
+"@
+
+[System.IO.File]::WriteAllText((Join-Path $here "dist\Server\iniciar-servidor.bat"), $batServer, [System.Text.Encoding]::ASCII)
+[System.IO.File]::WriteAllText((Join-Path $here "dist\Server\iniciar-servidor-console.bat"), $batServerConsole, [System.Text.Encoding]::ASCII)
+
+# 7. Scripts de inicializacao e instalacao para o Client
+$batClient = @"
+@echo off
+cd /d "%~dp0"
+start "" javaw -jar transacao-client.jar
 "@
 
 $batClientConsole = @"
@@ -104,29 +100,15 @@ powershell -NoProfile -Command "$startup = [Environment]::GetFolderPath('Startup
 pause
 '@
 
-# Salva launchers na raiz de dist
-[System.IO.File]::WriteAllText((Join-Path $here "dist\iniciar-servidor.bat"), $batServer, [System.Text.Encoding]::ASCII)
-[System.IO.File]::WriteAllText((Join-Path $here "dist\iniciar-client.bat"), $batClient, [System.Text.Encoding]::ASCII)
-[System.IO.File]::WriteAllText((Join-Path $here "dist\iniciar-servidor-console.bat"), $batServerConsole, [System.Text.Encoding]::ASCII)
-[System.IO.File]::WriteAllText((Join-Path $here "dist\iniciar-client-console.bat"), $batClientConsole, [System.Text.Encoding]::ASCII)
-[System.IO.File]::WriteAllText((Join-Path $here "dist\iniciar-client-oculto.vbs"), $vbsClient, [System.Text.Encoding]::ASCII)
-[System.IO.File]::WriteAllText((Join-Path $here "dist\instalar-inicializacao-automatica.bat"), $batInstallStartup, [System.Text.Encoding]::ASCII)
-[System.IO.File]::WriteAllText((Join-Path $here "dist\desinstalar-inicializacao-automatica.bat"), $batUninstallStartup, [System.Text.Encoding]::ASCII)
-
-# Salva launchers nas subpastas Server e Client
-[System.IO.File]::WriteAllText((Join-Path $here "dist\Server\iniciar-servidor.bat"), $batServer, [System.Text.Encoding]::ASCII)
-[System.IO.File]::WriteAllText((Join-Path $here "dist\Server\iniciar-servidor-console.bat"), $batServerConsole, [System.Text.Encoding]::ASCII)
 [System.IO.File]::WriteAllText((Join-Path $here "dist\Client\iniciar-client.bat"), $batClient, [System.Text.Encoding]::ASCII)
 [System.IO.File]::WriteAllText((Join-Path $here "dist\Client\iniciar-client-console.bat"), $batClientConsole, [System.Text.Encoding]::ASCII)
 [System.IO.File]::WriteAllText((Join-Path $here "dist\Client\iniciar-client-oculto.vbs"), $vbsClient, [System.Text.Encoding]::ASCII)
 [System.IO.File]::WriteAllText((Join-Path $here "dist\Client\instalar-inicializacao-automatica.bat"), $batInstallStartup, [System.Text.Encoding]::ASCII)
 [System.IO.File]::WriteAllText((Join-Path $here "dist\Client\desinstalar-inicializacao-automatica.bat"), $batUninstallStartup, [System.Text.Encoding]::ASCII)
 
-# 5. Gera o pacote ZIP de primeira instalacao do Client para distribuicao
+# 8. Gera o pacote ZIP de instalacao do Client
 $clientZip = Join-Path $here "dist\transacao-client-instalador.zip"
-if (Test-Path $clientZip) { Remove-Item $clientZip -Force }
-
 Write-Host "Gerando pacote ZIP de instalacao do Client..."
 Compress-Archive -Path "$here\dist\Client\*" -DestinationPath $clientZip -Force
 
-Write-Host "Estrutura completa e pacote ZIP gerados em dist\ com sucesso!"
+Write-Host "Build concluido com sucesso! Estrutura limpa em dist\"
