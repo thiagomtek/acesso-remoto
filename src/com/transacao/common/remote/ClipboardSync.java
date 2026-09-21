@@ -25,9 +25,9 @@ import java.util.zip.ZipOutputStream;
  * dois lados da conexao, para que Ctrl+C na maquina remota e Ctrl+V na
  * maquina local (e vice-versa) movam o mesmo conteudo.
  *
- * Usa java.awt.datatransfer.Clipboard.addFlavorListener para detectar
- * mudancas locais e reencaminha-las; ao aplicar uma mudanca vinda do outro
- * lado, marca um flag para nao reencaminhar de volta (evitar eco infinito).
+ * Utiliza tanto FlavorListener quanto uma thread de polling periodica (a cada
+ * 300ms) para contornar limitacoes do Windows onde mudancas de texto sem
+ * alteracao de flavor types nao disparam eventos do AWT.
  */
 public class ClipboardSync implements FlavorListener {
 
@@ -41,20 +41,70 @@ public class ClipboardSync implements FlavorListener {
     private final Sender sender;
     private final File receivedDir;
     private volatile String lastKnownText;
+    private volatile String lastKnownFilesFingerprint;
     private volatile boolean applyingRemoteChange = false;
+    private volatile boolean running = true;
+    private final Thread pollThread;
 
     public ClipboardSync(Sender sender, File receivedDir) {
         this.sender = sender;
         this.receivedDir = receivedDir;
+
+        // Inicializa o estado conhecido para nao reenviar o conteudo que ja estava no clipboard
+        initCurrentState();
+
         clipboard.addFlavorListener(this);
+
+        this.pollThread = new Thread(this::pollLoop, "clipboard-sync-poll");
+        this.pollThread.setDaemon(true);
+        this.pollThread.start();
+    }
+
+    private void initCurrentState() {
+        try {
+            Transferable t = clipboard.getContents(null);
+            if (t != null) {
+                if (t.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+                    lastKnownText = (String) t.getTransferData(DataFlavor.stringFlavor);
+                } else if (t.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                    @SuppressWarnings("unchecked")
+                    List<File> files = (List<File>) t.getTransferData(DataFlavor.javaFileListFlavor);
+                    lastKnownFilesFingerprint = computeFilesFingerprint(files);
+                }
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     public void stop() {
+        running = false;
+        if (pollThread != null) {
+            pollThread.interrupt();
+        }
         clipboard.removeFlavorListener(this);
     }
 
     @Override
     public void flavorsChanged(FlavorEvent e) {
+        checkLocalClipboard();
+    }
+
+    private void pollLoop() {
+        while (running) {
+            try {
+                Thread.sleep(300);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (!running) {
+                break;
+            }
+            checkLocalClipboard();
+        }
+    }
+
+    private synchronized void checkLocalClipboard() {
         if (applyingRemoteChange) {
             return;
         }
@@ -63,23 +113,28 @@ public class ClipboardSync implements FlavorListener {
             if (t == null) {
                 return;
             }
-            if (t.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+            if (t.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+                String text = (String) t.getTransferData(DataFlavor.stringFlavor);
+                if (text != null && !text.isEmpty() && !text.equals(lastKnownText)) {
+                    lastKnownText = text;
+                    lastKnownFilesFingerprint = null;
+                    sender.sendText(text);
+                }
+            } else if (t.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
                 @SuppressWarnings("unchecked")
                 List<File> files = (List<File>) t.getTransferData(DataFlavor.javaFileListFlavor);
-                byte[] zip = zipFiles(files);
-                if (zip != null) {
-                    sender.sendFiles(zip);
-                }
-            } else if (t.isDataFlavorSupported(DataFlavor.stringFlavor)) {
-                String text = (String) t.getTransferData(DataFlavor.stringFlavor);
-                if (text != null && !text.equals(lastKnownText)) {
-                    lastKnownText = text;
-                    sender.sendText(text);
+                String fingerprint = computeFilesFingerprint(files);
+                if (fingerprint != null && !fingerprint.equals(lastKnownFilesFingerprint)) {
+                    lastKnownFilesFingerprint = fingerprint;
+                    lastKnownText = null;
+                    byte[] zip = zipFiles(files);
+                    if (zip != null) {
+                        sender.sendFiles(zip);
+                    }
                 }
             }
         } catch (Exception ignored) {
-            // area de transferencia pode ficar momentaneamente indisponivel
-            // (outro processo segurando o lock nativo); ignora e tenta na proxima mudanca
+            // Area de transferencia pode estar momentaneamente bloqueada por outro app
         }
     }
 
@@ -87,8 +142,13 @@ public class ClipboardSync implements FlavorListener {
         applyingRemoteChange = true;
         try {
             lastKnownText = text;
+            lastKnownFilesFingerprint = null;
             clipboard.setContents(new StringSelection(text), null);
         } finally {
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException ignored) {
+            }
             applyingRemoteChange = false;
         }
     }
@@ -99,11 +159,28 @@ public class ClipboardSync implements FlavorListener {
             File targetDir = new File(receivedDir, "clip_" + System.currentTimeMillis());
             targetDir.mkdirs();
             List<File> extracted = unzip(zipBytes, targetDir);
+            lastKnownFilesFingerprint = computeFilesFingerprint(extracted);
+            lastKnownText = null;
             clipboard.setContents(new FileListTransferable(extracted), null);
         } catch (IOException ignored) {
         } finally {
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException ignored) {
+            }
             applyingRemoteChange = false;
         }
+    }
+
+    private String computeFilesFingerprint(List<File> files) {
+        if (files == null || files.isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (File f : files) {
+            sb.append(f.getAbsolutePath()).append(':').append(f.length()).append(':').append(f.lastModified()).append(';');
+        }
+        return sb.toString();
     }
 
     private byte[] zipFiles(List<File> files) throws IOException {
