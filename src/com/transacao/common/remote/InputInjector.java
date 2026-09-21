@@ -114,6 +114,24 @@ public class InputInjector {
             digits = String.valueOf(code);
         }
         try {
+            // Quem envia o caractere pode ter chegado ate ele digitando com Shift
+            // no teclado fisico (ex: Shift+1 para "!") - o Shift bruto ja foi
+            // encaminhado e fica fisicamente pressionado aqui ANTES desse
+            // caractere chegar. Se o Alt+Numpad rodar com o Shift ainda
+            // pressionado, a combinacao Alt+Shift e o atalho padrao do Windows
+            // para TROCAR O LAYOUT DE TECLADO, quebrando essa digitacao (e as
+            // seguintes, se o layout realmente mudar) - por isso soltamos
+            // Shift/Ctrl aqui antes de comecar, independente do que estiver
+            // fisicamente pressionado no momento.
+            try {
+                robot.keyRelease(KeyEvent.VK_SHIFT);
+            } catch (Exception ignored) {
+            }
+            try {
+                robot.keyRelease(KeyEvent.VK_CONTROL);
+            } catch (Exception ignored) {
+            }
+
             robot.keyPress(KeyEvent.VK_ALT);
             for (char digit : digits.toCharArray()) {
                 int numpadKey = KeyEvent.VK_NUMPAD0 + (digit - '0');

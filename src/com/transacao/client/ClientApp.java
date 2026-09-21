@@ -54,7 +54,7 @@ public class ClientApp extends JFrame {
     private final JButton disconnectButton = new JButton("Desconectar");
     private final JButton discoverButton = new JButton("Buscar servidor na rede");
     private final JCheckBox startWithWindowsCheck = new JCheckBox("Iniciar com o Windows (neste usuario)");
-    private final JCheckBox keepAliveCheck = new JCheckBox("Manter computador ativo (anti-suspensao com CapsLock a cada 5 min)", false);
+    private final JCheckBox keepAliveCheck = new JCheckBox("Manter computador ativo (anti-suspensao com mouse+CapsLock a cada 1 min)", false);
     private final JButton chooseButton = new JButton("Selecionar arquivo .zip ou pasta...");
     private final JButton sendButton = new JButton("Enviar");
     private final JLabel selectedLabel = new JLabel("Nada selecionado");
@@ -478,6 +478,7 @@ public class ClientApp extends JFrame {
                     java.net.Socket plainSocket = new java.net.Socket();
                     plainSocket.connect(new java.net.InetSocketAddress(host, port), 5000);
                     SSLSocket s = (SSLSocket) factory.createSocket(plainSocket, host, port, true);
+                    s.setTcpNoDelay(true);
                     s.startHandshake();
                     socket = s;
                     out = new DataOutputStream(s.getOutputStream());
@@ -698,6 +699,12 @@ public class ClientApp extends JFrame {
                 inputInjector = new InputInjector();
             }
             action.run(inputInjector);
+            // Acorda a captura de tela na hora em vez de esperar o intervalo
+            // ocioso (ate 250ms) - e o que fazia o resultado de um clique
+            // demorar para aparecer para quem esta controlando.
+            if (screenStreamer != null) {
+                screenStreamer.requestImmediateCapture();
+            }
         } catch (Exception ex) {
             log("Erro ao aplicar comando remoto: " + ex.getMessage());
         }

@@ -72,6 +72,12 @@ public class ServerApp extends JFrame {
     private final JButton remoteStartButton = new JButton("Iniciar controle remoto");
     private final JButton remoteStopButton = new JButton("Parar controle remoto");
     private final JLabel remoteStatusLabel = new JLabel("Sem client conectado");
+    private final JButton fullscreenButton = new JButton("Tela cheia");
+    private JPanel remoteViewerHolder;
+    private JFrame fullscreenWindow;
+    private JPanel fullscreenTopBar;
+    private Timer fullscreenHoverTimer;
+    private boolean fullscreenBarVisible;
 
     private final JComboBox<Mixer.Info> micDeviceCombo = new JComboBox<>(
             AudioDevices.listCaptureDevices().toArray(new Mixer.Info[0]));
@@ -121,9 +127,18 @@ public class ServerApp extends JFrame {
         // setExtendedState(MAXIMIZED_BOTH) - em maquinas com escala do Windows
         // diferente de 100%, o "maximizado" do Swing pode calcular o tamanho em
         // pixels logicos (menores), deixando sobra de tela nao coberta pela janela.
+        // Descontamos os insets da tela (barra de tarefas/dock) para a janela
+        // caber na area realmente visivel - sem isso a janela ficava do tamanho
+        // do monitor inteiro, incluindo a faixa da barra de tarefas, cortando o
+        // rodape da janela (e a tela remota exibida nela) para fora da area
+        // visivel.
         GraphicsDevice device = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
-        DisplayMode mode = device.getDisplayMode();
-        setBounds(0, 0, mode.getWidth(), mode.getHeight());
+        GraphicsConfiguration gc = device.getDefaultConfiguration();
+        Rectangle screenBounds = gc.getBounds();
+        Insets insets = Toolkit.getDefaultToolkit().getScreenInsets(gc);
+        setBounds(screenBounds.x + insets.left, screenBounds.y + insets.top,
+                screenBounds.width - insets.left - insets.right,
+                screenBounds.height - insets.top - insets.bottom);
     }
 
     private JPanel buildTransferTab() {
@@ -176,11 +191,121 @@ public class ServerApp extends JFrame {
         JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         controlPanel.add(remoteStartButton);
         controlPanel.add(remoteStopButton);
+        controlPanel.add(fullscreenButton);
         controlPanel.add(remoteStatusLabel);
 
+        remoteViewerHolder = new JPanel(new BorderLayout());
+        remoteViewerHolder.add(remoteViewerPanel, BorderLayout.CENTER);
+
         panel.add(controlPanel, BorderLayout.NORTH);
-        panel.add(remoteViewerPanel, BorderLayout.CENTER);
+        panel.add(remoteViewerHolder, BorderLayout.CENTER);
+
+        fullscreenButton.addActionListener(e -> enterFullscreen());
         return panel;
+    }
+
+    /**
+     * Abre o visualizador em uma janela sem bordas ocupando a resolucao fisica
+     * inteira do monitor onde a janela do Servidor esta (igual a logica ja usada
+     * em buildUi() para o tamanho da janela principal), para uma experiencia de
+     * tela cheia parecida com a Area de Trabalho Remota nativa do Windows. A
+     * imagem remota ja se estica para preencher o componente (RemoteViewerPanel),
+     * entao ocupar o monitor inteiro faz ela se adaptar automaticamente a
+     * resolucao. Nao usa modo exclusivo (setFullScreenWindow) para funcionar bem
+     * com multiplos monitores e nao interferir em outras janelas do usuario.
+     */
+    private void enterFullscreen() {
+        if (fullscreenWindow != null) {
+            return;
+        }
+        GraphicsConfiguration gc = getGraphicsConfiguration();
+        GraphicsDevice device = gc != null ? gc.getDevice()
+                : GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
+        Rectangle bounds = device.getDefaultConfiguration().getBounds();
+
+        fullscreenWindow = new JFrame(device.getDefaultConfiguration());
+        fullscreenWindow.setUndecorated(true);
+        fullscreenWindow.setLayout(new BorderLayout());
+
+        // Barra escondida por padrao (igual a Area de Trabalho Remota nativa do
+        // Windows): so aparece quando o mouse encosta no topo-centro da tela, e
+        // some de novo quando o mouse se afasta - nao fica ocupando espaco da
+        // imagem remota o tempo todo.
+        fullscreenTopBar = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
+        fullscreenTopBar.setBackground(Color.DARK_GRAY);
+        JButton exitButton = new JButton("Sair da tela cheia");
+        exitButton.addActionListener(e -> exitFullscreen());
+        fullscreenTopBar.add(exitButton);
+        fullscreenTopBar.setVisible(false);
+        fullscreenBarVisible = false;
+
+        remoteViewerHolder.remove(remoteViewerPanel);
+        fullscreenWindow.add(fullscreenTopBar, BorderLayout.NORTH);
+        fullscreenWindow.add(remoteViewerPanel, BorderLayout.CENTER);
+
+        fullscreenWindow.setBounds(bounds);
+        fullscreenWindow.setVisible(true);
+        remoteViewerPanel.requestFocusInWindow();
+
+        startFullscreenHoverWatcher(bounds);
+        fullscreenButton.setEnabled(false);
+    }
+
+    /**
+     * Fica de olho na posicao do cursor (por polling, independente de qual
+     * componente esta por baixo do mouse) para mostrar a barra de opcoes so
+     * quando o cursor encosta numa faixa estreita no topo-centro da tela, e
+     * escondê-la quando o cursor se afasta - do mesmo jeito que a barra de
+     * conexao da Area de Trabalho Remota nativa do Windows funciona.
+     */
+    private void startFullscreenHoverWatcher(Rectangle windowBounds) {
+        int hotZoneHalfWidth = 220;
+        fullscreenHoverTimer = new Timer(150, e -> {
+            if (fullscreenWindow == null) {
+                return;
+            }
+            Point p = MouseInfo.getPointerInfo().getLocation();
+            int localX = p.x - windowBounds.x;
+            int localY = p.y - windowBounds.y;
+            int centerX = windowBounds.width / 2;
+
+            if (!fullscreenBarVisible) {
+                boolean inHotZone = localY <= 6 && Math.abs(localX - centerX) <= hotZoneHalfWidth;
+                if (inHotZone) {
+                    fullscreenBarVisible = true;
+                    fullscreenTopBar.setVisible(true);
+                    fullscreenWindow.revalidate();
+                }
+            } else {
+                int barHeight = Math.max(fullscreenTopBar.getHeight(), 32);
+                boolean stillNearTop = localY <= barHeight + 24;
+                if (!stillNearTop) {
+                    fullscreenBarVisible = false;
+                    fullscreenTopBar.setVisible(false);
+                    fullscreenWindow.revalidate();
+                }
+            }
+        });
+        fullscreenHoverTimer.start();
+    }
+
+    private void exitFullscreen() {
+        if (fullscreenWindow == null) {
+            return;
+        }
+        if (fullscreenHoverTimer != null) {
+            fullscreenHoverTimer.stop();
+            fullscreenHoverTimer = null;
+        }
+        fullscreenWindow.remove(remoteViewerPanel);
+        remoteViewerHolder.add(remoteViewerPanel, BorderLayout.CENTER);
+        remoteViewerHolder.revalidate();
+        remoteViewerHolder.repaint();
+
+        fullscreenWindow.dispose();
+        fullscreenWindow = null;
+        fullscreenTopBar = null;
+        fullscreenButton.setEnabled(true);
     }
 
     private JPanel buildAudioTab() {
@@ -418,6 +543,7 @@ public class ServerApp extends JFrame {
         while (serverSocket != null && !serverSocket.isClosed()) {
             try {
                 SSLSocket socket = (SSLSocket) serverSocket.accept();
+                socket.setTcpNoDelay(true);
                 SwingUtilities.invokeLater(() -> log("Client conectado: " + socket.getRemoteSocketAddress()));
                 createSession(socket);
             } catch (Exception ex) {
@@ -517,6 +643,8 @@ public class ServerApp extends JFrame {
         if (session == activeSession) {
             return;
         }
+
+        exitFullscreen();
 
         if (activeSession != null) {
             activeSession.receiver.setRemoteFrameListener(null);

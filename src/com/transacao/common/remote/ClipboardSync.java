@@ -190,7 +190,9 @@ public class ClipboardSync implements FlavorListener {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         try (ZipOutputStream zos = new ZipOutputStream(baos)) {
             for (File f : files) {
-                if (f.isFile()) {
+                if (f.isDirectory()) {
+                    zipDirectory(f, f.getName(), zos);
+                } else if (f.isFile()) {
                     zos.putNextEntry(new ZipEntry(f.getName()));
                     Files.copy(f.toPath(), zos);
                     zos.closeEntry();
@@ -200,23 +202,56 @@ public class ClipboardSync implements FlavorListener {
         return baos.toByteArray();
     }
 
+    private void zipDirectory(File dir, String entryPrefix, ZipOutputStream zos) throws IOException {
+        File[] children = dir.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (File child : children) {
+            String entryName = entryPrefix + "/" + child.getName();
+            if (child.isDirectory()) {
+                zipDirectory(child, entryName, zos);
+            } else {
+                zos.putNextEntry(new ZipEntry(entryName));
+                Files.copy(child.toPath(), zos);
+                zos.closeEntry();
+            }
+        }
+    }
+
     private List<File> unzip(byte[] zipBytes, File targetDir) throws IOException {
-        List<File> result = new ArrayList<>();
+        // Retorna so as entradas de topo (arquivos soltos ou pastas), para o
+        // clipboard exibir a mesma selecao de quem copiou (ex: uma pasta em vez
+        // de cada arquivo dela individualmente).
+        List<File> topLevel = new ArrayList<>();
         try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 File out = new File(targetDir, entry.getName());
-                try (FileOutputStream fos = new FileOutputStream(out)) {
-                    byte[] buffer = new byte[8192];
-                    int read;
-                    while ((read = zis.read(buffer)) != -1) {
-                        fos.write(buffer, 0, read);
+                if (entry.isDirectory()) {
+                    out.mkdirs();
+                } else {
+                    File parent = out.getParentFile();
+                    if (parent != null) {
+                        parent.mkdirs();
+                    }
+                    try (FileOutputStream fos = new FileOutputStream(out)) {
+                        byte[] buffer = new byte[8192];
+                        int read;
+                        while ((read = zis.read(buffer)) != -1) {
+                            fos.write(buffer, 0, read);
+                        }
                     }
                 }
-                result.add(out);
+
+                String topName = entry.getName().split("/", 2)[0];
+                File topFile = new File(targetDir, topName);
+                if (!topLevel.contains(topFile)) {
+                    topLevel.add(topFile);
+                }
             }
         }
-        return result;
+        return topLevel;
     }
 
     private static class FileListTransferable implements Transferable {
