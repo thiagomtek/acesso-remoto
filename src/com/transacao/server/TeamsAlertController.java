@@ -8,9 +8,10 @@ import java.util.function.Consumer;
 
 /**
  * Alerta de atividade nova no Teams do client: em vez do beep, toca uma
- * sirene e abre uma janela para pausar - mas SO quando o usuario esta
- * ausente do PC do Servidor (sem mexer mouse/teclado ha N minutos, ver
- * UserPresenceMonitor). Se o usuario esta presente, so registra no log.
+ * sirene e abre uma janela para pausar. Com "verificar inatividade" marcado
+ * (padrao), so toca quando o usuario esta ausente do PC do Servidor (sem
+ * mexer mouse/teclado ha N minutos, ver UserPresenceMonitor) - se esta
+ * presente, so registra no log. Desmarcado, toca sempre.
  *
  * A sirene para quando: o usuario clica em pausar/fecha a janela, o usuario
  * volta a mexer no PC, ou a atividade do Teams e lida no client.
@@ -25,7 +26,9 @@ public class TeamsAlertController implements UserPresenceMonitor.Listener {
     private final UserPresenceMonitor presence;
 
     private final JCheckBox enabledCheck = new JCheckBox(
-            "Tocar sirene quando chegar atividade no Teams do client e eu estiver ausente", true);
+            "Tocar sirene quando chegar atividade no Teams do client", true);
+    private final JCheckBox checkIdleCheck = new JCheckBox(
+            "Verificar inatividade (so tocar quando eu estiver ausente)", true);
     private final JSpinner awayMinutesSpinner = new JSpinner(new SpinnerNumberModel(DEFAULT_AWAY_MINUTES, 1, 240, 1));
     private final JLabel presenceLabel = new JLabel("Presente");
     private final JButton testButton = new JButton("Testar sirene");
@@ -41,6 +44,7 @@ public class TeamsAlertController implements UserPresenceMonitor.Listener {
         presence.setErrorListener(log);
         awayMinutesSpinner.addChangeListener(e ->
                 presence.setAwayAfterMs(((Number) awayMinutesSpinner.getValue()).intValue() * 60_000L));
+        checkIdleCheck.addActionListener(e -> awayMinutesSpinner.setEnabled(checkIdleCheck.isSelected()));
         testButton.addActionListener(e -> showAlert("Teste da sirene."));
     }
 
@@ -59,13 +63,15 @@ public class TeamsAlertController implements UserPresenceMonitor.Listener {
         c.gridwidth = 2;
         panel.add(enabledCheck, c);
         c.gridy = 1;
+        panel.add(checkIdleCheck, c);
+        c.gridy = 2;
         JPanel awayRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         awayRow.add(new JLabel("Considerar ausente apos"));
         awayRow.add(awayMinutesSpinner);
         awayRow.add(new JLabel("min sem mexer no mouse/teclado deste PC. Agora:"));
         awayRow.add(presenceLabel);
         panel.add(awayRow, c);
-        c.gridy = 2;
+        c.gridy = 3;
         panel.add(testButton, c);
         return panel;
     }
@@ -80,6 +86,10 @@ public class TeamsAlertController implements UserPresenceMonitor.Listener {
             if (now < snoozedUntil) {
                 log.accept("Alerta do Teams silenciado por mais "
                         + ((snoozedUntil - now) / 60_000 + 1) + " min - sem sirene.");
+                return;
+            }
+            if (!checkIdleCheck.isSelected()) {
+                showAlert("Chegou atividade nova no Teams do client.");
                 return;
             }
             if (!presence.isAway()) {
