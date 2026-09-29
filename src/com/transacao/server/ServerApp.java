@@ -34,6 +34,8 @@ import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import com.transacao.common.Protocol;
 
 /**
@@ -95,6 +97,7 @@ public class ServerApp extends JFrame {
     private Thread discoveryServerThread;
     private DataOutputStream out;
     private ClipboardSync clipboardSync;
+    private final TeamsAlertController teamsAlert = new TeamsAlertController(this::log);
     private AudioStreamer micStreamer;
     private Thread micStreamerThread;
 
@@ -103,6 +106,27 @@ public class ServerApp extends JFrame {
         buildUi();
         wireActions();
         refreshTransferUi();
+        installClipboardActivityTracking();
+        teamsAlert.start();
+    }
+
+    /**
+     * Repassa o estado minimizado da janela para o ClipboardSync, para so
+     * pausar a transferencia da area de transferencia quando a janela do
+     * Servidor estiver minimizada (fora de vista) - so trocar de foco para
+     * outro programa (Alt+Tab) sem minimizar continua sincronizando
+     * normalmente.
+     */
+    private void installClipboardActivityTracking() {
+        addWindowStateListener(e -> updateClipboardWindowActive());
+    }
+
+    private void updateClipboardWindowActive() {
+        if (clipboardSync == null) {
+            return;
+        }
+        boolean iconified = (getExtendedState() & JFrame.ICONIFIED) != 0;
+        clipboardSync.setWindowActive(!iconified);
     }
 
     private void buildUi() {
@@ -222,6 +246,7 @@ public class ServerApp extends JFrame {
         GraphicsDevice device = gc != null ? gc.getDevice()
                 : GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
         Rectangle bounds = device.getDefaultConfiguration().getBounds();
+        trySendRemote(o -> RemoteMessageSender.sendViewportSize(out, writeLock, new Dimension(bounds.width, bounds.height)));
 
         fullscreenWindow = new JFrame(device.getDefaultConfiguration());
         fullscreenWindow.setUndecorated(true);
@@ -235,6 +260,9 @@ public class ServerApp extends JFrame {
         fullscreenTopBar.setBackground(Color.DARK_GRAY);
         JButton exitButton = new JButton("Sair da tela cheia");
         exitButton.addActionListener(e -> exitFullscreen());
+        // Nao pode ser focavel - senao o Tab do teclado remoto move o foco para
+        // esse botao em vez de ser encaminhado para a maquina remota.
+        exitButton.setFocusable(false);
         fullscreenTopBar.add(exitButton);
         fullscreenTopBar.setVisible(false);
         fullscreenBarVisible = false;
@@ -306,11 +334,18 @@ public class ServerApp extends JFrame {
         fullscreenWindow = null;
         fullscreenTopBar = null;
         fullscreenButton.setEnabled(true);
+        updateClipboardWindowActive();
     }
 
     private JPanel buildAudioTab() {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        GridBagConstraints sec = new GridBagConstraints();
+        sec.gridx = 0;
+        sec.gridy = 0;
+        sec.fill = GridBagConstraints.HORIZONTAL;
+        sec.weightx = 1;
+        sec.insets = new Insets(0, 0, 8, 0);
 
         JPanel micPanel = new JPanel(new GridBagLayout());
         micPanel.setBorder(BorderFactory.createTitledBorder("Meu microfone (compartilhar com o client)"));
@@ -334,6 +369,7 @@ public class ServerApp extends JFrame {
         micButtons.add(micStopButton);
         micButtons.add(micStatusLabel);
         micPanel.add(micButtons, mc);
+        panel.add(micPanel, sec);
 
         JPanel remoteAudioPanel = new JPanel(new GridBagLayout());
         remoteAudioPanel.setBorder(BorderFactory.createTitledBorder("Audio do sistema do client (ouvir aqui)"));
@@ -351,9 +387,20 @@ public class ServerApp extends JFrame {
         rac.fill = GridBagConstraints.NONE;
         rac.weightx = 0;
         remoteAudioPanel.add(remoteAudioStatusLabel, rac);
+        sec.gridy = 1;
+        panel.add(remoteAudioPanel, sec);
 
-        panel.add(micPanel);
-        panel.add(remoteAudioPanel);
+        sec.gridy = 2;
+        panel.add(teamsAlert.buildSettingsPanel(), sec);
+
+        // Empurra as secoes pro topo em vez de esticarem pra preencher a aba.
+        GridBagConstraints glue = new GridBagConstraints();
+        glue.gridx = 0;
+        glue.gridy = 3;
+        glue.weighty = 1;
+        glue.fill = GridBagConstraints.VERTICAL;
+        panel.add(Box.createVerticalGlue(), glue);
+
         return panel;
     }
 
@@ -450,8 +497,21 @@ public class ServerApp extends JFrame {
     private void startRemoteControl() {
         trySendRemote(o -> {
             RemoteMessageSender.sendStart(out, writeLock);
+            // Adianta pro client a resolucao do nosso monitor: mesmo antes de ir
+            // pra tela cheia, nunca vale a pena transmitir mais pixels do que
+            // esse monitor consegue mostrar.
+            RemoteMessageSender.sendViewportSize(out, writeLock, currentServerScreenSize());
             log("Pedido de controle remoto enviado ao client.");
         });
+    }
+
+    /** Resolucao do monitor onde o Servidor esta agora (o mesmo usado por enterFullscreen()). */
+    private Dimension currentServerScreenSize() {
+        GraphicsConfiguration gc = getGraphicsConfiguration();
+        GraphicsDevice device = gc != null ? gc.getDevice()
+                : GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
+        Rectangle bounds = device.getDefaultConfiguration().getBounds();
+        return new Dimension(bounds.width, bounds.height);
     }
 
     private void stopRemoteControl() {
@@ -611,6 +671,18 @@ public class ServerApp extends JFrame {
     }
 
     /**
+     * Cooldown entre tentativas de auto-update PARA A MESMA MAQUINA (chave =
+     * IP), sobrevivendo a reconexoes - cada reconexao cria uma ClientSession
+     * NOVA, entao um cooldown guardado so na sessao nao segurava nada. Sem
+     * isso, um update que falha logo apos ser enviado (ex: o client cai e
+     * reconecta antes de terminar de aplicar a nova versao) e reenviado a
+     * cada reconexao, na hora, para sempre - ja aconteceu em producao
+     * (loop de "Connection reset by peer" centenas de vezes por segundo).
+     */
+    private static final long UPDATE_RETRY_COOLDOWN_MS = 60_000;
+    private final Map<String, Long> lastUpdateAttemptByIp = new ConcurrentHashMap<>();
+
+    /**
      * Compara o hash do jar que o client reportou no hello com o hash do
      * jar configurado em "Jar do client mais recente"; se forem diferentes,
      * envia a nova versao automaticamente e o client se auto-atualiza e
@@ -624,10 +696,28 @@ public class ServerApp extends JFrame {
         if (!updateJar.isFile()) {
             return;
         }
+        String ip = session.socket.getInetAddress().getHostAddress();
+        long now = System.currentTimeMillis();
+        Long lastAttempt = lastUpdateAttemptByIp.get(ip);
+        if (lastAttempt != null && now - lastAttempt < UPDATE_RETRY_COOLDOWN_MS) {
+            return;
+        }
         try {
             String latestHash = JarUtils.sha256(updateJar);
             if (latestHash.equals(session.jarHash)) {
                 return;
+            }
+            lastUpdateAttemptByIp.put(ip, now);
+            // Certificados/scripts (.bat/.vbs/.ps1) mudam junto com releases do
+            // jar, entao vao sempre juntos aqui - senao o client ficava com
+            // lancadores/certs desatualizados mesmo depois de "atualizar" (ex:
+            // inicializacao automatica com um script velho, nunca corrigido).
+            File extrasZip = new File(updateJar.getParentFile(), "transacao-client-extras.zip");
+            if (extrasZip.isFile()) {
+                byte[] extrasBytes = Files.readAllBytes(extrasZip.toPath());
+                RemoteMessageSender.sendUpdateExtrasPush(session.out, session.writeLock, extrasBytes);
+                log("Certificados/scripts atualizados enviados a " + session.displayName
+                        + " (" + extrasBytes.length + " bytes).");
             }
             byte[] jarBytes = Files.readAllBytes(updateJar.toPath());
             RemoteMessageSender.sendUpdatePush(session.out, session.writeLock, jarBytes);
@@ -701,6 +791,12 @@ public class ServerApp extends JFrame {
             }
 
             @Override
+            public void onStreamSize(Dimension size) {
+                SwingUtilities.invokeLater(() -> remoteViewerPanel.setCanvasSize(size));
+                log("Transmissao adaptada para " + size.width + "x" + size.height + ".");
+            }
+
+            @Override
             public void onTile(int x, int y, BufferedImage tileImage) {
                 remoteViewerPanel.applyTile(x, y, tileImage);
             }
@@ -724,6 +820,8 @@ public class ServerApp extends JFrame {
                 });
             }
         }, outputDir);
+        clipboardSync.setErrorListener(this::log);
+        updateClipboardWindowActive();
         session.receiver.setClipboardListener(new com.transacao.common.remote.ClipboardListener() {
             @Override
             public void onClipboardText(String text) {
@@ -735,6 +833,19 @@ public class ServerApp extends JFrame {
             public void onClipboardFiles(byte[] zipBytes) {
                 clipboardSync.applyRemoteFiles(zipBytes);
                 log("Arquivos copiados recebidos do client (" + zipBytes.length + " bytes).");
+            }
+        });
+        session.receiver.setTeamsActivityListener(new com.transacao.common.remote.TeamsActivityListener() {
+            @Override
+            public void onActivityDetected() {
+                log(">>> Nova atividade no Teams do client! <<<");
+                teamsAlert.onActivityDetected();
+            }
+
+            @Override
+            public void onActivityCleared() {
+                log("Atividade do Teams no client voltou ao normal.");
+                teamsAlert.onActivityCleared();
             }
         });
         session.receiver.setSystemAudioListener(new AudioChannelListener() {
@@ -907,8 +1018,12 @@ public class ServerApp extends JFrame {
                 : (serverSocket != null ? "Ouvindo, aguardando client" : "Parado"));
     }
 
+    private static final java.time.format.DateTimeFormatter LOG_TIME_FORMAT =
+            java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss");
+
     private void log(String message) {
-        SwingUtilities.invokeLater(() -> logArea.append(message + "\n"));
+        String timestamp = java.time.LocalTime.now().format(LOG_TIME_FORMAT);
+        SwingUtilities.invokeLater(() -> logArea.append("[" + timestamp + "] " + message + "\n"));
     }
 
     private class SwingTransferListener implements TransferListener {

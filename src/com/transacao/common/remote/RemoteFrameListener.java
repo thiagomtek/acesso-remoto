@@ -12,5 +12,8 @@ public interface RemoteFrameListener {
 
     void onScreenSize(Dimension size, double dpiScale);
 
+    /** Tamanho efetivamente transmitido agora (pode ser menor que onScreenSize, se adaptado ao viewport de quem ve). */
+    void onStreamSize(Dimension size);
+
     void onTile(int x, int y, BufferedImage tileImage);
 }

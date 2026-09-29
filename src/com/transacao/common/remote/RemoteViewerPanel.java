@@ -28,19 +28,102 @@ public class RemoteViewerPanel extends JPanel {
     private volatile int drawWidth = 1;
     private volatile int drawHeight = 1;
 
+    // Move de mouse "cru" (mouseMoved/mouseDragged) pode disparar centenas de
+    // eventos por segundo (ex: girar o mouse rapido na tela) - enviar e
+    // processar (Robot.mouseMove no client) cada um, um a um, e mais lento do
+    // que a taxa que eles chegam, entao uma fila cresce e o cursor no client
+    // fica "andando sozinho" varios segundos depois do usuario parar (testado
+    // em maquina real). A correcao e a mesma usada por VNC/RDP: nao enviar
+    // toda posicao bruta - so a mais recente, numa taxa maxima, descartando
+    // as intermediarias (so a posicao final importa pra quem esta vendo).
+    // mousePressed/mouseReleased continuam enviando a posicao na hora (fora
+    // dessa fila), pra um clique nunca cair atrasado num lugar errado.
+    private static final long MOVE_SEND_MIN_INTERVAL_NS = 15_000_000L; // ~66Hz
+    private final Object moveLock = new Object();
+    private Point pendingMove;
+    private volatile boolean moveSenderRunning = true;
+
     public RemoteViewerPanel() {
         setPreferredSize(new Dimension(960, 560));
         setBackground(Color.BLACK);
         setFocusable(true);
+        // Sem isso, o Swing intercepta Tab/Shift+Tab/Ctrl+Tab para mover o foco
+        // entre os componentes da janela (botoes etc.) antes mesmo do
+        // KeyListener abaixo ver o evento - a tecla nunca chegava a ser
+        // encaminhada para a maquina remota.
+        setFocusTraversalKeysEnabled(false);
         installInputForwarding();
+        startMoveSender();
+    }
+
+    /** Envia so a posicao de mouse mais recente, numa taxa maxima - ver comentario nos campos acima. */
+    private void startMoveSender() {
+        Thread t = new Thread(this::moveSenderLoop, "remote-mouse-move-sender");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void moveSenderLoop() {
+        long lastSendNanos = 0;
+        while (moveSenderRunning) {
+            try {
+                synchronized (moveLock) {
+                    while (pendingMove == null && moveSenderRunning) {
+                        moveLock.wait();
+                    }
+                    if (!moveSenderRunning) {
+                        return;
+                    }
+                }
+
+                long waitNs = MOVE_SEND_MIN_INTERVAL_NS - (System.nanoTime() - lastSendNanos);
+                if (waitNs > 0) {
+                    Thread.sleep(waitNs / 1_000_000, (int) (waitNs % 1_000_000));
+                }
+
+                Point p;
+                synchronized (moveLock) {
+                    p = pendingMove;
+                    pendingMove = null;
+                }
+                if (p == null) {
+                    continue; // outra sleep concorrente ja mandou essa posicao
+                }
+                RemoteInputSender s = sender;
+                if (s != null) {
+                    s.sendMouseMove(p.x, p.y);
+                }
+                lastSendNanos = System.nanoTime();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    private void queueMouseMove(Point remotePoint) {
+        synchronized (moveLock) {
+            pendingMove = remotePoint;
+            moveLock.notifyAll();
+        }
     }
 
     public void setInputSender(RemoteInputSender sender) {
         this.sender = sender;
     }
 
+    /**
+     * Tamanho NATIVO da tela remota (para mapear cliques/mouse com precisao -
+     * ver toRemote()). Nao muda o canvas: quem faz isso e setCanvasSize(),
+     * que pode ser um tamanho menor quando a transmissao esta adaptada ao
+     * viewport de quem ve (ver ScreenStreamer.setTargetViewport).
+     */
     public void setRemoteScreenSize(Dimension size) {
         this.remoteScreenSize = size;
+    }
+
+    /** Tamanho efetivamente transmitido agora - recria o canvas para receber os tiles nesse tamanho. */
+    public void setCanvasSize(Dimension size) {
         this.canvas = new BufferedImage(Math.max(1, size.width), Math.max(1, size.height), BufferedImage.TYPE_INT_RGB);
         repaint();
     }
@@ -109,8 +192,7 @@ public class RemoteViewerPanel extends JPanel {
                 if (sender == null) {
                     return;
                 }
-                Point p = toRemote(e.getPoint());
-                sender.sendMouseMove(p.x, p.y);
+                queueMouseMove(toRemote(e.getPoint()));
             }
 
             @Override
@@ -118,8 +200,7 @@ public class RemoteViewerPanel extends JPanel {
                 if (sender == null) {
                     return;
                 }
-                Point p = toRemote(e.getPoint());
-                sender.sendMouseMove(p.x, p.y);
+                queueMouseMove(toRemote(e.getPoint()));
             }
         });
         addMouseWheelListener(e -> {

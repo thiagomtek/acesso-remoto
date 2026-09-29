@@ -43,6 +43,26 @@ public final class RemoteMessageSender {
         }
     }
 
+    /** Enviado por quem controla, para o client adaptar a resolucao capturada a essa area de visualizacao (ex: tela cheia). */
+    public static void sendViewportSize(DataOutputStream out, Object writeLock, Dimension size) throws IOException {
+        synchronized (writeLock) {
+            out.writeByte(Protocol.REMOTE_VIEWPORT_SIZE);
+            out.writeInt(size.width);
+            out.writeInt(size.height);
+            out.flush();
+        }
+    }
+
+    /** Enviado pelo client sempre que o tamanho efetivamente transmitido muda (pode ser menor que a tela nativa). */
+    public static void sendStreamSize(DataOutputStream out, Object writeLock, Dimension size) throws IOException {
+        synchronized (writeLock) {
+            out.writeByte(Protocol.REMOTE_STREAM_SIZE);
+            out.writeInt(size.width);
+            out.writeInt(size.height);
+            out.flush();
+        }
+    }
+
     public static void sendMouseMove(DataOutputStream out, Object writeLock, int x, int y) throws IOException {
         synchronized (writeLock) {
             out.writeByte(Protocol.REMOTE_MOUSE_MOVE);
@@ -171,11 +191,35 @@ public final class RemoteMessageSender {
         }
     }
 
+    public static void sendTeamsActivityDetected(DataOutputStream out, Object writeLock) throws IOException {
+        synchronized (writeLock) {
+            out.writeByte(Protocol.REMOTE_TEAMS_ACTIVITY_DETECTED);
+            out.flush();
+        }
+    }
+
+    public static void sendTeamsActivityCleared(DataOutputStream out, Object writeLock) throws IOException {
+        synchronized (writeLock) {
+            out.writeByte(Protocol.REMOTE_TEAMS_ACTIVITY_CLEARED);
+            out.flush();
+        }
+    }
+
     public static void sendUpdatePush(DataOutputStream out, Object writeLock, byte[] jarBytes) throws IOException {
         synchronized (writeLock) {
             out.writeByte(Protocol.UPDATE_PUSH);
             out.writeLong(jarBytes.length);
             out.write(jarBytes);
+            out.flush();
+        }
+    }
+
+    /** Zip com certificados/scripts para o client sobrescrever no proprio diretorio antes de aplicar o UPDATE_PUSH do jar. */
+    public static void sendUpdateExtrasPush(DataOutputStream out, Object writeLock, byte[] zipBytes) throws IOException {
+        synchronized (writeLock) {
+            out.writeByte(Protocol.UPDATE_EXTRAS_PUSH);
+            out.writeLong(zipBytes.length);
+            out.write(zipBytes);
             out.flush();
         }
     }

@@ -77,6 +77,21 @@ public final class Protocol {
     /** Enviado pelo servidor ao client com uma nova versao do proprio client.jar, para auto-atualizacao. */
     public static final byte UPDATE_PUSH = 60;
 
+    /** Enviado pelo servidor ANTES do UPDATE_PUSH: zip com certificados e scripts (.bat/.vbs/.ps1) para sobrescrever no client, se mudaram nesta versao. */
+    public static final byte UPDATE_EXTRAS_PUSH = 61;
+
+    /** O client detectou atividade nova no Microsoft Teams (ex: mensagem nao lida). */
+    public static final byte REMOTE_TEAMS_ACTIVITY_DETECTED = 70;
+
+    /** A atividade do Microsoft Teams no client voltou ao normal (nada pendente). */
+    public static final byte REMOTE_TEAMS_ACTIVITY_CLEARED = 71;
+
+    /** Tamanho da area de visualizacao de quem controla (ex: tela cheia), para o client adaptar a resolucao capturada a ela. */
+    public static final byte REMOTE_VIEWPORT_SIZE = 72;
+
+    /** Tamanho efetivamente capturado/codificado agora pelo client (pode ser menor que REMOTE_SCREEN_SIZE, se adaptado ao viewport). */
+    public static final byte REMOTE_STREAM_SIZE = 73;
+
     private Protocol() {
     }
 }

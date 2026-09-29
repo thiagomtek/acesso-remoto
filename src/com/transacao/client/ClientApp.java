@@ -23,6 +23,7 @@ import com.transacao.common.remote.InputInjector;
 import com.transacao.common.remote.RemoteControlListener;
 import com.transacao.common.remote.RemoteMessageSender;
 import com.transacao.common.remote.ScreenKeepAlive;
+import com.transacao.common.remote.TeamsActivityWatcher;
 import com.transacao.common.remote.ScreenStreamer;
 
 import javax.net.ssl.SSLContext;
@@ -32,9 +33,17 @@ import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.Mixer;
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.nio.file.Path;
+import java.util.prefs.Preferences;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 /**
  * Aplicacao client: conecta via SSL ao servidor e, a partir dai, pode tanto
@@ -55,6 +64,7 @@ public class ClientApp extends JFrame {
     private final JButton discoverButton = new JButton("Buscar servidor na rede");
     private final JCheckBox startWithWindowsCheck = new JCheckBox("Iniciar com o Windows (neste usuario)");
     private final JCheckBox keepAliveCheck = new JCheckBox("Manter computador ativo (anti-suspensao com mouse+CapsLock a cada 1 min)", false);
+    private final JCheckBox teamsWatcherCheck = new JCheckBox("Avisar sobre atividade no Teams (bandeja do Windows)", false);
     private final JButton chooseButton = new JButton("Selecionar arquivo .zip ou pasta...");
     private final JButton sendButton = new JButton("Enviar");
     private final JLabel selectedLabel = new JLabel("Nada selecionado");
@@ -86,24 +96,84 @@ public class ClientApp extends JFrame {
     private InputInjector inputInjector;
     private ScreenStreamer screenStreamer;
     private Thread screenStreamerThread;
+    /** Ultimo viewport de quem controla (ex: tela cheia) recebido - aplicado ao iniciar/ja em andamento. */
+    private volatile Dimension pendingViewport;
     private AudioStreamer sysAudioStreamer;
     private Thread sysAudioStreamerThread;
     private DiscoveryClient discoveryClient;
     private Thread discoveryThread;
     private ScreenKeepAlive keepAlive;
     private Thread keepAliveThread;
+    private TeamsActivityWatcher teamsWatcher;
+    private Thread teamsWatcherThread;
 
     private static final String STARTUP_APP_NAME = "TransacaoClient";
+
+    // Preferencias persistidas do usuario atual (registro do Windows via
+    // java.util.prefs - nao precisa de privilegio de administrador, mesma
+    // ideia ja usada pelo WindowsStartup para a pasta Inicializacao).
+    private final Preferences prefs = Preferences.userNodeForPackage(ClientApp.class);
+    private static final String PREF_KEEP_ALIVE = "keepComputerActive";
+    private static final String PREF_TEAMS_WATCHER = "teamsWatcherEnabled";
+    private static final String PREF_ALLOW_REMOTE_CONTROL = "allowRemoteControl";
+    private static final String PREF_HOST = "host";
+    private static final String PREF_PORT = "port";
+    private static final String PREF_KEYSTORE = "keystorePath";
+    private static final String PREF_KEYSTORE_PASS = "keystorePass";
+    private static final String PREF_TRUSTSTORE = "truststorePath";
+    private static final String PREF_TRUSTSTORE_PASS = "truststorePass";
+    private static final String PREF_OUTPUT_DIR = "outputDir";
+
+    /** Carrega o valor salvo (se houver) e passa a gravar toda mudanca futura - assim o campo volta do jeito que o usuario deixou, mesmo depois do Client reiniciar (ex: auto-update). */
+    private void bindPersistedText(JTextField field, String key, String defaultValue) {
+        field.setText(prefs.get(key, defaultValue));
+        field.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                prefs.put(key, field.getText());
+            }
+        });
+    }
+
+    private void bindPersistedPassword(JPasswordField field, String key, String defaultValue) {
+        field.setText(prefs.get(key, defaultValue));
+        field.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                prefs.put(key, new String(field.getPassword()));
+            }
+        });
+    }
+
+    private void bindPersistedCheck(JCheckBox box, String key, boolean defaultValue) {
+        box.setSelected(prefs.getBoolean(key, defaultValue));
+        box.addActionListener(e -> prefs.putBoolean(key, box.isSelected()));
+    }
 
     public ClientApp() {
         super("Transacao - Client");
         buildUi();
+        // Todo campo de configuracao volta do jeito que o usuario deixou da
+        // ultima vez, mesmo depois do Client reiniciar (ex: auto-update).
+        bindPersistedText(hostField, PREF_HOST, hostField.getText());
+        bindPersistedText(portField, PREF_PORT, portField.getText());
+        bindPersistedText(keystoreField, PREF_KEYSTORE, keystoreField.getText());
+        bindPersistedPassword(keystorePassField, PREF_KEYSTORE_PASS, new String(keystorePassField.getPassword()));
+        bindPersistedText(truststoreField, PREF_TRUSTSTORE, truststoreField.getText());
+        bindPersistedPassword(truststorePassField, PREF_TRUSTSTORE_PASS, new String(truststorePassField.getPassword()));
+        bindPersistedText(outputDirField, PREF_OUTPUT_DIR, outputDirField.getText());
+        bindPersistedCheck(allowRemoteControlCheck, PREF_ALLOW_REMOTE_CONTROL, true);
         initSystemTray();
         wireActions();
         updateConnectionState(false);
         initStartupCheckbox();
+        keepAliveCheck.setSelected(prefs.getBoolean(PREF_KEEP_ALIVE, false));
         if (keepAliveCheck.isSelected()) {
             startKeepAlive();
+        }
+        teamsWatcherCheck.setSelected(prefs.getBoolean(PREF_TEAMS_WATCHER, false));
+        if (teamsWatcherCheck.isSelected()) {
+            startTeamsWatcher();
         }
         startDiscovery();
     }
@@ -179,15 +249,28 @@ public class ClientApp extends JFrame {
         controlPanel.add(allowRemoteControlCheck);
         controlPanel.add(remoteStatusLabel);
 
+        JPanel teamsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        teamsPanel.add(teamsWatcherCheck);
+
         JTextArea infoArea = new JTextArea(
                 "Esta maquina compartilha a propria tela quando o Servidor pede controle remoto.\n" +
-                "Desmarque \"Permitir controle remoto\" para recusar pedidos futuros.");
+                "Desmarque \"Permitir controle remoto\" para recusar pedidos futuros.\n\n" +
+                "\"Avisar sobre atividade no Teams\": fica de olho no icone do Microsoft Teams na " +
+                "bandeja do Windows e avisa o Servidor quando detectar atividade nova (ex: mensagem " +
+                "nao lida) - so avisa que algo aconteceu, nao le o conteudo da mensagem. Exige que o " +
+                "icone do Teams esteja visivel na bandeja (nao escondido atras da seta \"mostrar " +
+                "icones ocultos\").");
         infoArea.setEditable(false);
         infoArea.setOpaque(false);
         infoArea.setLineWrap(true);
         infoArea.setWrapStyleWord(true);
 
-        panel.add(controlPanel, BorderLayout.NORTH);
+        JPanel northPanel = new JPanel();
+        northPanel.setLayout(new BoxLayout(northPanel, BoxLayout.Y_AXIS));
+        northPanel.add(controlPanel);
+        northPanel.add(teamsPanel);
+
+        panel.add(northPanel, BorderLayout.NORTH);
         panel.add(infoArea, BorderLayout.CENTER);
         return panel;
     }
@@ -263,7 +346,10 @@ public class ClientApp extends JFrame {
 
     private void wireActions() {
         connectButton.addActionListener(e -> connect());
-        disconnectButton.addActionListener(e -> disconnect());
+        disconnectButton.addActionListener(e -> {
+            disconnect();
+            startDiscovery();
+        });
         discoverButton.addActionListener(e -> {
             if (discoveryClient != null) {
                 stopDiscovery("Busca por servidor cancelada.");
@@ -279,10 +365,20 @@ public class ClientApp extends JFrame {
         sysAudioStopButton.setEnabled(false);
 
         keepAliveCheck.addActionListener(e -> {
+            prefs.putBoolean(PREF_KEEP_ALIVE, keepAliveCheck.isSelected());
             if (keepAliveCheck.isSelected()) {
                 startKeepAlive();
             } else {
                 stopKeepAlive();
+            }
+        });
+
+        teamsWatcherCheck.addActionListener(e -> {
+            prefs.putBoolean(PREF_TEAMS_WATCHER, teamsWatcherCheck.isSelected());
+            if (teamsWatcherCheck.isSelected()) {
+                startTeamsWatcher();
+            } else {
+                stopTeamsWatcher();
             }
         });
     }
@@ -384,6 +480,38 @@ public class ClientApp extends JFrame {
         }
     }
 
+    private void startTeamsWatcher() {
+        if (teamsWatcher != null) {
+            return;
+        }
+        teamsWatcher = new TeamsActivityWatcher(detected -> {
+            if (detected) {
+                log("Atividade nova detectada no Teams.");
+                trySendRemote(() -> RemoteMessageSender.sendTeamsActivityDetected(out, writeLock));
+            } else {
+                log("Atividade do Teams voltou ao normal.");
+                trySendRemote(() -> RemoteMessageSender.sendTeamsActivityCleared(out, writeLock));
+            }
+        });
+        teamsWatcher.setErrorListener(this::log);
+        teamsWatcherThread = new Thread(teamsWatcher, "teams-activity-watcher");
+        teamsWatcherThread.setDaemon(true);
+        teamsWatcherThread.start();
+        log("Monitoramento de atividade do Teams ativo.");
+    }
+
+    private void stopTeamsWatcher() {
+        if (teamsWatcher != null) {
+            teamsWatcher.stop();
+            if (teamsWatcherThread != null) {
+                teamsWatcherThread.interrupt();
+            }
+            teamsWatcher = null;
+            teamsWatcherThread = null;
+            log("Monitoramento de atividade do Teams desativado.");
+        }
+    }
+
     private String currentJarHash() {
         try {
             File jar = JarUtils.findRunningJar(ClientApp.class);
@@ -393,6 +521,51 @@ public class ClientApp extends JFrame {
             return JarUtils.sha256(jar);
         } catch (Exception ex) {
             return "unknown";
+        }
+    }
+
+    /**
+     * Extrai certificados/scripts atualizados (zip) por cima do proprio
+     * diretorio de instalacao, ANTES do jar em si ser trocado - diferente do
+     * jar, esses arquivos nao estao travados/em uso, entao dá pra sobrescrever
+     * na hora, sem o script auxiliar de troca-e-reinicia. Sem isso, um
+     * auto-update so trocava o .jar e deixava .bat/.vbs/certificados antigos
+     * parados na maquina do client, mesmo quando essenciais (ex: o lancador
+     * da inicializacao automatica) mudavam numa versao nova.
+     */
+    private void applyUpdateExtras(byte[] zipBytes) {
+        try {
+            File jar = JarUtils.findRunningJar(ClientApp.class);
+            File installDir = jar.getParentFile();
+            if (installDir == null) {
+                return;
+            }
+            Path installRoot = installDir.toPath().normalize();
+            int count = 0;
+            try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
+                ZipEntry entry;
+                while ((entry = zis.getNextEntry()) != null) {
+                    File target = new File(installDir, entry.getName());
+                    Path targetPath = target.toPath().normalize();
+                    if (!targetPath.startsWith(installRoot)) {
+                        // Entrada de zip tentando escapar do diretorio de instalacao
+                        // (ex: "../"); ignora por seguranca.
+                        continue;
+                    }
+                    if (entry.isDirectory()) {
+                        target.mkdirs();
+                        continue;
+                    }
+                    target.getParentFile().mkdirs();
+                    try (FileOutputStream fos = new FileOutputStream(target)) {
+                        zis.transferTo(fos);
+                    }
+                    count++;
+                }
+            }
+            log("Certificados/scripts atualizados (" + count + " arquivo(s)).");
+        } catch (Exception ex) {
+            log("Erro ao aplicar certificados/scripts atualizados: " + ex.getMessage());
         }
     }
 
@@ -501,10 +674,13 @@ public class ClientApp extends JFrame {
                     receiver = new FileTransferReceiver(in, outputDir, listener);
                     receiver.setDisconnectListener(() -> SwingUtilities.invokeLater(() -> {
                         if (socket != null) {
-                            log("Conexao com o servidor perdida. Buscando novamente...");
+                            log("Conexao com o servidor perdida. Buscando novamente em "
+                                    + (RECONNECT_BACKOFF_MS / 1000) + "s...");
                             disconnect();
+                            scheduleReconnectSearch();
                         }
                     }));
+                    receiver.setUpdateExtrasListener(zipBytes -> SwingUtilities.invokeLater(() -> applyUpdateExtras(zipBytes)));
                     receiver.setUpdateListener(newJarBytes -> SwingUtilities.invokeLater(() -> applyUpdate(newJarBytes)));
                     receiver.setRemoteControlListener(new RemoteControlListener() {
                         @Override
@@ -515,6 +691,14 @@ public class ClientApp extends JFrame {
                         @Override
                         public void onStopRequested() {
                             stopSharingScreen();
+                        }
+
+                        @Override
+                        public void onViewportSize(Dimension size) {
+                            pendingViewport = size;
+                            if (screenStreamer != null) {
+                                screenStreamer.setTargetViewport(size);
+                            }
                         }
 
                         @Override
@@ -571,6 +755,7 @@ public class ClientApp extends JFrame {
                             });
                         }
                     }, outputDir);
+                    clipboardSync.setErrorListener(ClientApp.this::log);
                     receiver.setClipboardListener(new ClipboardListener() {
                         @Override
                         public void onClipboardText(String text) {
@@ -667,8 +852,19 @@ public class ClientApp extends JFrame {
         sysAudioStopButton.setEnabled(false);
         sysAudioStatusLabel.setText("Audio do sistema parado");
         micPlaybackStatusLabel.setText("Sem microfone remoto");
+    }
 
-        startDiscovery();
+    // Quando a conexao cai sozinha (sem ser por um clique em "Desconectar"),
+    // espera um pouco antes de comecar a procurar o servidor de novo, em vez
+    // de tentar na hora - sem esse respiro, qualquer instabilidade real de
+    // rede (ou um auto-update que falha) virava um loop bem rapido de
+    // conectar/desconectar sem parar (ja aconteceu em producao).
+    private static final long RECONNECT_BACKOFF_MS = 3000;
+
+    private void scheduleReconnectSearch() {
+        Timer timer = new Timer((int) RECONNECT_BACKOFF_MS, e -> startDiscovery());
+        timer.setRepeats(false);
+        timer.start();
     }
 
     private interface RemoteIoAction {
@@ -721,12 +917,22 @@ public class ClientApp extends JFrame {
         try {
             screenStreamer = new ScreenStreamer(out, writeLock);
             screenStreamer.setErrorListener(this::log);
+            // Sempre que o tamanho efetivamente transmitido mudar (inclusive
+            // agora, no arranque), avisa o servidor para ele redimensionar o
+            // canvas onde os tiles sao desenhados.
+            screenStreamer.setStreamSizeListener(size ->
+                    trySendRemote(() -> RemoteMessageSender.sendStreamSize(out, writeLock, size)));
+            if (pendingViewport != null) {
+                // Aplicado antes da thread iniciar: seguro mexer direto, e ja
+                // deixa o 1o frame (dentro de run()) sair no tamanho certo.
+                screenStreamer.setTargetViewport(pendingViewport);
+            }
             RemoteMessageSender.sendScreenSize(out, writeLock, screenStreamer.getScreenSize(), screenStreamer.getDpiScale());
             screenStreamerThread = new Thread(screenStreamer, "screen-streamer");
             screenStreamerThread.setDaemon(true);
             screenStreamerThread.start();
             SwingUtilities.invokeLater(() -> remoteStatusLabel.setText("Compartilhando tela"));
-            log("Iniciando compartilhamento de tela. Resolucao: " + screenStreamer.getScreenSize().width
+            log("Iniciando compartilhamento de tela. Resolucao nativa: " + screenStreamer.getScreenSize().width
                     + "x" + screenStreamer.getScreenSize().height
                     + " (escala do Windows detectada: " + Math.round(screenStreamer.getDpiScale() * 100) + "%)");
         } catch (Exception ex) {
@@ -819,8 +1025,12 @@ public class ClientApp extends JFrame {
         sysAudioStartButton.setEnabled(connected);
     }
 
+    private static final java.time.format.DateTimeFormatter LOG_TIME_FORMAT =
+            java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss");
+
     private void log(String message) {
-        SwingUtilities.invokeLater(() -> logArea.append(message + "\n"));
+        String timestamp = java.time.LocalTime.now().format(LOG_TIME_FORMAT);
+        SwingUtilities.invokeLater(() -> logArea.append("[" + timestamp + "] " + message + "\n"));
     }
 
     private class SwingTransferListener implements TransferListener {

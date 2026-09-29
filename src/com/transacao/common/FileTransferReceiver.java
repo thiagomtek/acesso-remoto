@@ -42,11 +42,13 @@ public class FileTransferReceiver implements Runnable {
     private volatile RemoteFrameListener remoteFrameListener;
     private volatile RemoteControlListener remoteControlListener;
     private volatile ClipboardListener clipboardListener;
+    private volatile com.transacao.common.remote.TeamsActivityListener teamsActivityListener;
     private volatile AudioChannelListener micAudioListener;
     private volatile AudioChannelListener systemAudioListener;
     private volatile BiConsumer<String, String> helloListener;
     private volatile Runnable disconnectListener;
     private volatile Consumer<byte[]> updateListener;
+    private volatile Consumer<byte[]> updateExtrasListener;
 
     public FileTransferReceiver(DataInputStream in, File outputDir, TransferListener listener) {
         this.in = in;
@@ -67,6 +69,11 @@ public class FileTransferReceiver implements Runnable {
     /** Registrado por qualquer um dos dois lados, para sincronizar a area de transferencia. */
     public void setClipboardListener(ClipboardListener clipboardListener) {
         this.clipboardListener = clipboardListener;
+    }
+
+    /** Registrado por quem CONTROLA, para ser avisado de atividade nova no Teams do client. */
+    public void setTeamsActivityListener(com.transacao.common.remote.TeamsActivityListener teamsActivityListener) {
+        this.teamsActivityListener = teamsActivityListener;
     }
 
     /** Registrado por quem RECEBE o audio do microfone do outro lado. */
@@ -92,6 +99,11 @@ public class FileTransferReceiver implements Runnable {
     /** Registrado pelo client para receber uma nova versao do proprio jar enviada pelo servidor. */
     public void setUpdateListener(Consumer<byte[]> updateListener) {
         this.updateListener = updateListener;
+    }
+
+    /** Registrado pelo client para receber certificados/scripts atualizados (zip) enviados antes do jar. */
+    public void setUpdateExtrasListener(Consumer<byte[]> updateExtrasListener) {
+        this.updateExtrasListener = updateExtrasListener;
     }
 
     public void stop() {
@@ -159,6 +171,15 @@ public class FileTransferReceiver implements Runnable {
                 }
                 return true;
             }
+            case Protocol.UPDATE_EXTRAS_PUSH: {
+                long length = in.readLong();
+                byte[] zipBytes = new byte[(int) length];
+                in.readFully(zipBytes);
+                if (updateExtrasListener != null) {
+                    updateExtrasListener.accept(zipBytes);
+                }
+                return true;
+            }
             case Protocol.REMOTE_START:
                 if (remoteControlListener != null) {
                     remoteControlListener.onStartRequested();
@@ -175,6 +196,22 @@ public class FileTransferReceiver implements Runnable {
                 double dpiScale = in.readDouble();
                 if (remoteFrameListener != null) {
                     remoteFrameListener.onScreenSize(new Dimension(width, height), dpiScale);
+                }
+                return true;
+            }
+            case Protocol.REMOTE_VIEWPORT_SIZE: {
+                int width = in.readInt();
+                int height = in.readInt();
+                if (remoteControlListener != null) {
+                    remoteControlListener.onViewportSize(new Dimension(width, height));
+                }
+                return true;
+            }
+            case Protocol.REMOTE_STREAM_SIZE: {
+                int width = in.readInt();
+                int height = in.readInt();
+                if (remoteFrameListener != null) {
+                    remoteFrameListener.onStreamSize(new Dimension(width, height));
                 }
                 return true;
             }
@@ -257,6 +294,18 @@ public class FileTransferReceiver implements Runnable {
                 in.readFully(zipBytes);
                 if (clipboardListener != null) {
                     clipboardListener.onClipboardFiles(zipBytes);
+                }
+                return true;
+            }
+            case Protocol.REMOTE_TEAMS_ACTIVITY_DETECTED: {
+                if (teamsActivityListener != null) {
+                    teamsActivityListener.onActivityDetected();
+                }
+                return true;
+            }
+            case Protocol.REMOTE_TEAMS_ACTIVITY_CLEARED: {
+                if (teamsActivityListener != null) {
+                    teamsActivityListener.onActivityCleared();
                 }
                 return true;
             }
