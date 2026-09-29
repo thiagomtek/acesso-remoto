@@ -42,6 +42,7 @@ public class FileTransferReceiver implements Runnable {
     private volatile RemoteFrameListener remoteFrameListener;
     private volatile RemoteControlListener remoteControlListener;
     private volatile ClipboardListener clipboardListener;
+    private volatile com.transacao.common.remote.TeamsActivityListener teamsActivityListener;
     private volatile AudioChannelListener micAudioListener;
     private volatile AudioChannelListener systemAudioListener;
     private volatile BiConsumer<String, String> helloListener;
@@ -67,6 +68,11 @@ public class FileTransferReceiver implements Runnable {
     /** Registrado por qualquer um dos dois lados, para sincronizar a area de transferencia. */
     public void setClipboardListener(ClipboardListener clipboardListener) {
         this.clipboardListener = clipboardListener;
+    }
+
+    /** Registrado por quem CONTROLA, para ser avisado de atividade nova no Teams do client. */
+    public void setTeamsActivityListener(com.transacao.common.remote.TeamsActivityListener teamsActivityListener) {
+        this.teamsActivityListener = teamsActivityListener;
     }
 
     /** Registrado por quem RECEBE o audio do microfone do outro lado. */
@@ -257,6 +263,18 @@ public class FileTransferReceiver implements Runnable {
                 in.readFully(zipBytes);
                 if (clipboardListener != null) {
                     clipboardListener.onClipboardFiles(zipBytes);
+                }
+                return true;
+            }
+            case Protocol.REMOTE_TEAMS_ACTIVITY_DETECTED: {
+                if (teamsActivityListener != null) {
+                    teamsActivityListener.onActivityDetected();
+                }
+                return true;
+            }
+            case Protocol.REMOTE_TEAMS_ACTIVITY_CLEARED: {
+                if (teamsActivityListener != null) {
+                    teamsActivityListener.onActivityCleared();
                 }
                 return true;
             }

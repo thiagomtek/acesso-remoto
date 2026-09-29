@@ -103,6 +103,26 @@ public class ServerApp extends JFrame {
         buildUi();
         wireActions();
         refreshTransferUi();
+        installClipboardActivityTracking();
+    }
+
+    /**
+     * Repassa o estado minimizado da janela para o ClipboardSync, para so
+     * pausar a transferencia da area de transferencia quando a janela do
+     * Servidor estiver minimizada (fora de vista) - so trocar de foco para
+     * outro programa (Alt+Tab) sem minimizar continua sincronizando
+     * normalmente.
+     */
+    private void installClipboardActivityTracking() {
+        addWindowStateListener(e -> updateClipboardWindowActive());
+    }
+
+    private void updateClipboardWindowActive() {
+        if (clipboardSync == null) {
+            return;
+        }
+        boolean iconified = (getExtendedState() & JFrame.ICONIFIED) != 0;
+        clipboardSync.setWindowActive(!iconified);
     }
 
     private void buildUi() {
@@ -235,6 +255,9 @@ public class ServerApp extends JFrame {
         fullscreenTopBar.setBackground(Color.DARK_GRAY);
         JButton exitButton = new JButton("Sair da tela cheia");
         exitButton.addActionListener(e -> exitFullscreen());
+        // Nao pode ser focavel - senao o Tab do teclado remoto move o foco para
+        // esse botao em vez de ser encaminhado para a maquina remota.
+        exitButton.setFocusable(false);
         fullscreenTopBar.add(exitButton);
         fullscreenTopBar.setVisible(false);
         fullscreenBarVisible = false;
@@ -306,6 +329,7 @@ public class ServerApp extends JFrame {
         fullscreenWindow = null;
         fullscreenTopBar = null;
         fullscreenButton.setEnabled(true);
+        updateClipboardWindowActive();
     }
 
     private JPanel buildAudioTab() {
@@ -724,6 +748,8 @@ public class ServerApp extends JFrame {
                 });
             }
         }, outputDir);
+        clipboardSync.setErrorListener(this::log);
+        updateClipboardWindowActive();
         session.receiver.setClipboardListener(new com.transacao.common.remote.ClipboardListener() {
             @Override
             public void onClipboardText(String text) {
@@ -735,6 +761,18 @@ public class ServerApp extends JFrame {
             public void onClipboardFiles(byte[] zipBytes) {
                 clipboardSync.applyRemoteFiles(zipBytes);
                 log("Arquivos copiados recebidos do client (" + zipBytes.length + " bytes).");
+            }
+        });
+        session.receiver.setTeamsActivityListener(new com.transacao.common.remote.TeamsActivityListener() {
+            @Override
+            public void onActivityDetected() {
+                log(">>> Nova atividade no Teams do client! <<<");
+                Toolkit.getDefaultToolkit().beep();
+            }
+
+            @Override
+            public void onActivityCleared() {
+                log("Atividade do Teams no client voltou ao normal.");
             }
         });
         session.receiver.setSystemAudioListener(new AudioChannelListener() {
@@ -907,8 +945,12 @@ public class ServerApp extends JFrame {
                 : (serverSocket != null ? "Ouvindo, aguardando client" : "Parado"));
     }
 
+    private static final java.time.format.DateTimeFormatter LOG_TIME_FORMAT =
+            java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss");
+
     private void log(String message) {
-        SwingUtilities.invokeLater(() -> logArea.append(message + "\n"));
+        String timestamp = java.time.LocalTime.now().format(LOG_TIME_FORMAT);
+        SwingUtilities.invokeLater(() -> logArea.append("[" + timestamp + "] " + message + "\n"));
     }
 
     private class SwingTransferListener implements TransferListener {

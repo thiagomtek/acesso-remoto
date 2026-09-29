@@ -2,6 +2,7 @@ package com.transacao.common.remote;
 
 import java.awt.AWTException;
 import java.awt.Robot;
+import java.awt.Toolkit;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 
@@ -35,6 +36,14 @@ public class InputInjector {
     }
 
     public void keyPress(int keyCode) {
+        if (isLockingKey(keyCode)) {
+            // CapsLock/NumLock/ScrollLock sao teclas de "trava" com estado
+            // proprio no SO - simular so o pressionar/soltar bruto (robot.keyPress
+            // + keyRelease) nem sempre alterna esse estado de forma confiavel.
+            // A API de locking key state do Toolkit e feita exatamente para isso.
+            toggleLockingKey(keyCode);
+            return;
+        }
         try {
             robot.keyPress(keyCode);
         } catch (IllegalArgumentException ignored) {
@@ -42,9 +51,36 @@ public class InputInjector {
     }
 
     public void keyRelease(int keyCode) {
+        if (isLockingKey(keyCode)) {
+            // O toggle inteiro ja aconteceu no keyPress (nao e um press+release
+            // separado como as demais teclas) - nao faz nada aqui.
+            return;
+        }
         try {
             robot.keyRelease(keyCode);
         } catch (IllegalArgumentException ignored) {
+        }
+    }
+
+    private boolean isLockingKey(int keyCode) {
+        return keyCode == KeyEvent.VK_CAPS_LOCK
+                || keyCode == KeyEvent.VK_NUM_LOCK
+                || keyCode == KeyEvent.VK_SCROLL_LOCK;
+    }
+
+    private void toggleLockingKey(int keyCode) {
+        try {
+            Toolkit toolkit = Toolkit.getDefaultToolkit();
+            boolean current = toolkit.getLockingKeyState(keyCode);
+            toolkit.setLockingKeyState(keyCode, !current);
+        } catch (Exception e) {
+            // Plataforma sem suporte a essa API (ex: alguns ambientes Linux/Mac) -
+            // cai de volta no pressionar/soltar bruto, melhor que nada.
+            try {
+                robot.keyPress(keyCode);
+                robot.keyRelease(keyCode);
+            } catch (Exception ignored) {
+            }
         }
     }
 

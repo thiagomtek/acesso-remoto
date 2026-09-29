@@ -77,6 +77,12 @@ public final class Protocol {
     /** Enviado pelo servidor ao client com uma nova versao do proprio client.jar, para auto-atualizacao. */
     public static final byte UPDATE_PUSH = 60;
 
+    /** O client detectou atividade nova no Microsoft Teams (ex: mensagem nao lida). */
+    public static final byte REMOTE_TEAMS_ACTIVITY_DETECTED = 70;
+
+    /** A atividade do Microsoft Teams no client voltou ao normal (nada pendente). */
+    public static final byte REMOTE_TEAMS_ACTIVITY_CLEARED = 71;
+
     private Protocol() {
     }
 }

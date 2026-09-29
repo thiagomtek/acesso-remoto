@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
@@ -44,6 +45,8 @@ public class ClipboardSync implements FlavorListener {
     private volatile String lastKnownFilesFingerprint;
     private volatile boolean applyingRemoteChange = false;
     private volatile boolean running = true;
+    private volatile boolean windowActive = true;
+    private volatile Consumer<String> errorListener;
     private final Thread pollThread;
 
     public ClipboardSync(Sender sender, File receivedDir) {
@@ -76,12 +79,39 @@ public class ClipboardSync implements FlavorListener {
         }
     }
 
+    /** Chamado quando uma leitura/escrita do clipboard falha, so para logar na UI (nao interrompe a sincronizacao). */
+    public void setErrorListener(Consumer<String> errorListener) {
+        this.errorListener = errorListener;
+    }
+
     public void stop() {
         running = false;
         if (pollThread != null) {
             pollThread.interrupt();
         }
         clipboard.removeFlavorListener(this);
+    }
+
+    /**
+     * Liga/desliga o monitoramento continuo da area de transferencia conforme
+     * a janela deste app esta em primeiro plano (visivel e nao minimizada) ou
+     * nao - para nao ficar de olho no clipboard o tempo todo enquanto o app
+     * esta minimizado em segundo plano.
+     *
+     * Ao voltar ao primeiro plano, verifica o que esta no clipboard NESTE
+     * MOMENTO e transfere se for diferente do que ja foi sincronizado antes -
+     * e o mesmo comportamento de qualquer ferramenta de acesso remoto (copiar
+     * um arquivo no Explorer e trocar para esta janela para colar so funciona
+     * se o que foi copiado durante a troca de foco nao for descartado).
+     */
+    public synchronized void setWindowActive(boolean active) {
+        if (active == windowActive) {
+            return;
+        }
+        windowActive = active;
+        if (active) {
+            checkLocalClipboard();
+        }
     }
 
     @Override
@@ -105,7 +135,7 @@ public class ClipboardSync implements FlavorListener {
     }
 
     private synchronized void checkLocalClipboard() {
-        if (applyingRemoteChange) {
+        if (applyingRemoteChange || !windowActive) {
             return;
         }
         try {
@@ -113,14 +143,11 @@ public class ClipboardSync implements FlavorListener {
             if (t == null) {
                 return;
             }
-            if (t.isDataFlavorSupported(DataFlavor.stringFlavor)) {
-                String text = (String) t.getTransferData(DataFlavor.stringFlavor);
-                if (text != null && !text.isEmpty() && !text.equals(lastKnownText)) {
-                    lastKnownText = text;
-                    lastKnownFilesFingerprint = null;
-                    sender.sendText(text);
-                }
-            } else if (t.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+            // Checa arquivos ANTES de texto: uma copia de arquivo/pasta no
+            // Explorer as vezes tambem expoe uma flavor de texto (ex: o
+            // caminho), o que faria ela ser tratada como texto em vez de
+            // arquivo se checassemos texto primeiro.
+            if (t.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
                 @SuppressWarnings("unchecked")
                 List<File> files = (List<File>) t.getTransferData(DataFlavor.javaFileListFlavor);
                 String fingerprint = computeFilesFingerprint(files);
@@ -132,9 +159,21 @@ public class ClipboardSync implements FlavorListener {
                         sender.sendFiles(zip);
                     }
                 }
+            } else if (t.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+                String text = (String) t.getTransferData(DataFlavor.stringFlavor);
+                if (text != null && !text.isEmpty() && !text.equals(lastKnownText)) {
+                    lastKnownText = text;
+                    lastKnownFilesFingerprint = null;
+                    sender.sendText(text);
+                }
             }
-        } catch (Exception ignored) {
-            // Area de transferencia pode estar momentaneamente bloqueada por outro app
+        } catch (Exception e) {
+            // Area de transferencia pode estar momentaneamente bloqueada por
+            // outro app (comum no Windows) - nao interrompe a sincronizacao,
+            // so avisa para nao ficar totalmente invisivel quando falha.
+            if (errorListener != null) {
+                errorListener.accept("Falha ao ler area de transferencia (tentando de novo): " + e);
+            }
         }
     }
 

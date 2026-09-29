@@ -32,6 +32,11 @@ public class RemoteViewerPanel extends JPanel {
         setPreferredSize(new Dimension(960, 560));
         setBackground(Color.BLACK);
         setFocusable(true);
+        // Sem isso, o Swing intercepta Tab/Shift+Tab/Ctrl+Tab para mover o foco
+        // entre os componentes da janela (botoes etc.) antes mesmo do
+        // KeyListener abaixo ver o evento - a tecla nunca chegava a ser
+        // encaminhada para a maquina remota.
+        setFocusTraversalKeysEnabled(false);
         installInputForwarding();
     }
 

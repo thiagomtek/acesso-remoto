@@ -171,6 +171,20 @@ public final class RemoteMessageSender {
         }
     }
 
+    public static void sendTeamsActivityDetected(DataOutputStream out, Object writeLock) throws IOException {
+        synchronized (writeLock) {
+            out.writeByte(Protocol.REMOTE_TEAMS_ACTIVITY_DETECTED);
+            out.flush();
+        }
+    }
+
+    public static void sendTeamsActivityCleared(DataOutputStream out, Object writeLock) throws IOException {
+        synchronized (writeLock) {
+            out.writeByte(Protocol.REMOTE_TEAMS_ACTIVITY_CLEARED);
+            out.flush();
+        }
+    }
+
     public static void sendUpdatePush(DataOutputStream out, Object writeLock, byte[] jarBytes) throws IOException {
         synchronized (writeLock) {
             out.writeByte(Protocol.UPDATE_PUSH);

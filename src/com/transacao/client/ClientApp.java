@@ -23,6 +23,7 @@ import com.transacao.common.remote.InputInjector;
 import com.transacao.common.remote.RemoteControlListener;
 import com.transacao.common.remote.RemoteMessageSender;
 import com.transacao.common.remote.ScreenKeepAlive;
+import com.transacao.common.remote.TeamsActivityWatcher;
 import com.transacao.common.remote.ScreenStreamer;
 
 import javax.net.ssl.SSLContext;
@@ -55,6 +56,7 @@ public class ClientApp extends JFrame {
     private final JButton discoverButton = new JButton("Buscar servidor na rede");
     private final JCheckBox startWithWindowsCheck = new JCheckBox("Iniciar com o Windows (neste usuario)");
     private final JCheckBox keepAliveCheck = new JCheckBox("Manter computador ativo (anti-suspensao com mouse+CapsLock a cada 1 min)", false);
+    private final JCheckBox teamsWatcherCheck = new JCheckBox("Avisar sobre atividade no Teams (bandeja do Windows)", false);
     private final JButton chooseButton = new JButton("Selecionar arquivo .zip ou pasta...");
     private final JButton sendButton = new JButton("Enviar");
     private final JLabel selectedLabel = new JLabel("Nada selecionado");
@@ -92,6 +94,8 @@ public class ClientApp extends JFrame {
     private Thread discoveryThread;
     private ScreenKeepAlive keepAlive;
     private Thread keepAliveThread;
+    private TeamsActivityWatcher teamsWatcher;
+    private Thread teamsWatcherThread;
 
     private static final String STARTUP_APP_NAME = "TransacaoClient";
 
@@ -179,15 +183,28 @@ public class ClientApp extends JFrame {
         controlPanel.add(allowRemoteControlCheck);
         controlPanel.add(remoteStatusLabel);
 
+        JPanel teamsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        teamsPanel.add(teamsWatcherCheck);
+
         JTextArea infoArea = new JTextArea(
                 "Esta maquina compartilha a propria tela quando o Servidor pede controle remoto.\n" +
-                "Desmarque \"Permitir controle remoto\" para recusar pedidos futuros.");
+                "Desmarque \"Permitir controle remoto\" para recusar pedidos futuros.\n\n" +
+                "\"Avisar sobre atividade no Teams\": fica de olho no icone do Microsoft Teams na " +
+                "bandeja do Windows e avisa o Servidor quando detectar atividade nova (ex: mensagem " +
+                "nao lida) - so avisa que algo aconteceu, nao le o conteudo da mensagem. Exige que o " +
+                "icone do Teams esteja visivel na bandeja (nao escondido atras da seta \"mostrar " +
+                "icones ocultos\").");
         infoArea.setEditable(false);
         infoArea.setOpaque(false);
         infoArea.setLineWrap(true);
         infoArea.setWrapStyleWord(true);
 
-        panel.add(controlPanel, BorderLayout.NORTH);
+        JPanel northPanel = new JPanel();
+        northPanel.setLayout(new BoxLayout(northPanel, BoxLayout.Y_AXIS));
+        northPanel.add(controlPanel);
+        northPanel.add(teamsPanel);
+
+        panel.add(northPanel, BorderLayout.NORTH);
         panel.add(infoArea, BorderLayout.CENTER);
         return panel;
     }
@@ -283,6 +300,14 @@ public class ClientApp extends JFrame {
                 startKeepAlive();
             } else {
                 stopKeepAlive();
+            }
+        });
+
+        teamsWatcherCheck.addActionListener(e -> {
+            if (teamsWatcherCheck.isSelected()) {
+                startTeamsWatcher();
+            } else {
+                stopTeamsWatcher();
             }
         });
     }
@@ -381,6 +406,38 @@ public class ClientApp extends JFrame {
             keepAlive = null;
             keepAliveThread = null;
             log("Anti-suspensao desativado.");
+        }
+    }
+
+    private void startTeamsWatcher() {
+        if (teamsWatcher != null) {
+            return;
+        }
+        teamsWatcher = new TeamsActivityWatcher(detected -> {
+            if (detected) {
+                log("Atividade nova detectada no Teams.");
+                trySendRemote(() -> RemoteMessageSender.sendTeamsActivityDetected(out, writeLock));
+            } else {
+                log("Atividade do Teams voltou ao normal.");
+                trySendRemote(() -> RemoteMessageSender.sendTeamsActivityCleared(out, writeLock));
+            }
+        });
+        teamsWatcher.setErrorListener(this::log);
+        teamsWatcherThread = new Thread(teamsWatcher, "teams-activity-watcher");
+        teamsWatcherThread.setDaemon(true);
+        teamsWatcherThread.start();
+        log("Monitoramento de atividade do Teams ativo.");
+    }
+
+    private void stopTeamsWatcher() {
+        if (teamsWatcher != null) {
+            teamsWatcher.stop();
+            if (teamsWatcherThread != null) {
+                teamsWatcherThread.interrupt();
+            }
+            teamsWatcher = null;
+            teamsWatcherThread = null;
+            log("Monitoramento de atividade do Teams desativado.");
         }
     }
 
@@ -571,6 +628,7 @@ public class ClientApp extends JFrame {
                             });
                         }
                     }, outputDir);
+                    clipboardSync.setErrorListener(ClientApp.this::log);
                     receiver.setClipboardListener(new ClipboardListener() {
                         @Override
                         public void onClipboardText(String text) {
@@ -819,8 +877,12 @@ public class ClientApp extends JFrame {
         sysAudioStartButton.setEnabled(connected);
     }
 
+    private static final java.time.format.DateTimeFormatter LOG_TIME_FORMAT =
+            java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss");
+
     private void log(String message) {
-        SwingUtilities.invokeLater(() -> logArea.append(message + "\n"));
+        String timestamp = java.time.LocalTime.now().format(LOG_TIME_FORMAT);
+        SwingUtilities.invokeLater(() -> logArea.append("[" + timestamp + "] " + message + "\n"));
     }
 
     private class SwingTransferListener implements TransferListener {
