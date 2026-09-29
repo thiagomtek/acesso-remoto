@@ -95,6 +95,7 @@ public class ServerApp extends JFrame {
     private Thread discoveryServerThread;
     private DataOutputStream out;
     private ClipboardSync clipboardSync;
+    private final TeamsAlertController teamsAlert = new TeamsAlertController(this::log);
     private AudioStreamer micStreamer;
     private Thread micStreamerThread;
 
@@ -104,6 +105,7 @@ public class ServerApp extends JFrame {
         wireActions();
         refreshTransferUi();
         installClipboardActivityTracking();
+        teamsAlert.start();
     }
 
     /**
@@ -378,6 +380,7 @@ public class ServerApp extends JFrame {
 
         panel.add(micPanel);
         panel.add(remoteAudioPanel);
+        panel.add(teamsAlert.buildSettingsPanel());
         return panel;
     }
 
@@ -767,12 +770,13 @@ public class ServerApp extends JFrame {
             @Override
             public void onActivityDetected() {
                 log(">>> Nova atividade no Teams do client! <<<");
-                Toolkit.getDefaultToolkit().beep();
+                teamsAlert.onActivityDetected();
             }
 
             @Override
             public void onActivityCleared() {
                 log("Atividade do Teams no client voltou ao normal.");
+                teamsAlert.onActivityCleared();
             }
         });
         session.receiver.setSystemAudioListener(new AudioChannelListener() {
