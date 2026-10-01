@@ -102,9 +102,28 @@ if not defined JAVA (
 pause
 '@
 
+$commandServer = @'
+#!/bin/bash
+DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$DIR"
+
+if [ -x "$HOME/.jdk/jdk-21.0.12.1+1/Contents/Home/bin/java" ]; then
+    JAVA_CMD="$HOME/.jdk/jdk-21.0.12.1+1/Contents/Home/bin/java"
+elif command -v java >/dev/null 2>&1; then
+    JAVA_CMD="java"
+else
+    echo "Java nao encontrado nesta maquina. Instale o Java (JRE 17+)."
+    read -p "Pressione Enter para sair..."
+    exit 1
+fi
+
+"$JAVA_CMD" -Djava.net.preferIPv4Stack=true -jar "$DIR/transacao-server.jar"
+'@
+
 [System.IO.File]::WriteAllText((Join-Path $here "dist\Server\resolve-java.ps1"), $resolveJavaPs1, [System.Text.Encoding]::ASCII)
 [System.IO.File]::WriteAllText((Join-Path $here "dist\Server\iniciar-servidor.bat"), $batServer, [System.Text.Encoding]::ASCII)
 [System.IO.File]::WriteAllText((Join-Path $here "dist\Server\iniciar-servidor-console.bat"), $batServerConsole, [System.Text.Encoding]::ASCII)
+[System.IO.File]::WriteAllText((Join-Path $here "dist\Server\iniciar-servidor.command"), $commandServer, [System.Text.Encoding]::ASCII)
 
 # 8. Scripts de inicializacao e instalacao para o Client
 $batClient = @'
@@ -194,6 +213,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0uninstall-startup.ps1"
 pause
 '@
 
+$commandClient = @'
+#!/bin/bash
+DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$DIR"
+
+if [ -x "$HOME/.jdk/jdk-21.0.12.1+1/Contents/Home/bin/java" ]; then
+    JAVA_CMD="$HOME/.jdk/jdk-21.0.12.1+1/Contents/Home/bin/java"
+elif command -v java >/dev/null 2>&1; then
+    JAVA_CMD="java"
+else
+    echo "Java nao encontrado nesta maquina. Instale o Java (JRE 17+)."
+    read -p "Pressione Enter para sair..."
+    exit 1
+fi
+
+"$JAVA_CMD" -Djava.net.preferIPv4Stack=true -jar "$DIR/transacao-client.jar"
+'@
+
 [System.IO.File]::WriteAllText((Join-Path $here "dist\Client\resolve-java.ps1"), $resolveJavaPs1, [System.Text.Encoding]::ASCII)
 [System.IO.File]::WriteAllText((Join-Path $here "dist\Client\install-startup.ps1"), $installStartupPs1, [System.Text.Encoding]::ASCII)
 [System.IO.File]::WriteAllText((Join-Path $here "dist\Client\uninstall-startup.ps1"), $uninstallStartupPs1, [System.Text.Encoding]::ASCII)
@@ -202,6 +239,7 @@ pause
 [System.IO.File]::WriteAllText((Join-Path $here "dist\Client\iniciar-client-oculto.vbs"), $vbsClient, [System.Text.Encoding]::ASCII)
 [System.IO.File]::WriteAllText((Join-Path $here "dist\Client\instalar-inicializacao-automatica.bat"), $batInstallStartup, [System.Text.Encoding]::ASCII)
 [System.IO.File]::WriteAllText((Join-Path $here "dist\Client\desinstalar-inicializacao-automatica.bat"), $batUninstallStartup, [System.Text.Encoding]::ASCII)
+[System.IO.File]::WriteAllText((Join-Path $here "dist\Client\iniciar-client.command"), $commandClient, [System.Text.Encoding]::ASCII)
 
 # 9. Gera o pacote ZIP de instalacao do Client
 $clientZip = Join-Path $here "dist\transacao-client-instalador.zip"

@@ -79,47 +79,66 @@ Senha padrao de tudo: `changeit` (ja preenchida nos campos da interface).
 
 ## 2. Compilar
 
+**No Windows (PowerShell):**
 ```powershell
 .\compile.ps1
 ```
 
+**No macOS / Linux:**
+```bash
+./compile.sh
+```
+
 Gera as classes em `out/`.
 
-## 3. Empacotar em .jar (opcional)
+## 3. Empacotar em .jar e gerar pasta dist
 
+**No Windows (PowerShell):**
 ```powershell
 .\build-jar.ps1
 ```
 
-Gera `dist/transacao-server.jar` e `dist/transacao-client.jar`, cada um executavel com `java -jar`.
+**No macOS / Linux:**
+```bash
+./build-jar.sh
+```
+
+Gera toda a estrutura pronta em `dist/`, incluindo:
+- `dist/Server/transacao-server.jar` com lançadores `.bat` (Windows) e `iniciar-servidor.command` (macOS).
+- `dist/Client/transacao-client.jar` com instaladores Windows e `iniciar-client.command` (macOS).
+- `dist/transacao-client-instalador.zip` e pacotes de auto-update.
 
 ## 4. Rodar
 
-Na maquina servidor:
-```powershell
-.\run-server.ps1
-```
-Clique em "Iniciar servidor".
+### No macOS:
+- **Servidor:** Dê dois cliques no arquivo `dist/Server/iniciar-servidor.command` (ou execute via terminal com `./iniciar-servidor.command`).
+- **Client:** Dê dois cliques em `dist/Client/iniciar-client.command`.
 
-Na maquina client:
-```powershell
-.\run-client.ps1
-```
-O Client ja comeca a procurar um Servidor na rede sozinho; ou preencha o host/IP manualmente e clique em "Conectar".
+### No Windows:
+- **Servidor:** Execute `dist\Server\iniciar-servidor.bat` ou `.\run-server.ps1`.
+- **Client:** Execute `dist\Client\iniciar-client.bat` ou `.\run-client.ps1`.
+
+O Client comeca a procurar um Servidor na rede sozinho; ou preencha o host/IP manualmente (ex: `192.168.x.x` ou IP Tailscale) e clique em "Conectar".
 
 Depois de conectado, em qualquer uma das duas janelas: "Selecionar arquivo .zip ou pasta..." e depois "Enviar". Os arquivos recebidos caem na pasta configurada em "Pasta de saida" (por padrao `recebidos_server` / `recebidos_client`).
 
 ## Liberar as portas no firewall (maquina servidor)
 
-Se client e servidor estiverem em maquinas diferentes na mesma rede/VPN, libere as portas no Firewall do Windows na maquina servidor: a porta TCP configurada para a conexao (padrao 9444) e a porta UDP de descoberta automatica (9445).
+Se client e servidor estiverem em maquinas diferentes na mesma rede/VPN, libere as portas no Firewall na maquina servidor: a porta TCP configurada para a conexao (padrao 9444) e a porta UDP de descoberta automatica (9445).
 
+### No Windows:
 ```powershell
 New-NetFirewallRule -DisplayName "Transacao SSL" -Direction Inbound -Protocol TCP -LocalPort 9444 -Action Allow
 New-NetFirewallRule -DisplayName "Transacao Discovery" -Direction Inbound -Protocol UDP -LocalPort 9445 -Action Allow
 ```
 
+### No macOS:
+- O Java solicita permissao de conexoes de entrada no primeiro inicio (basta clicar em **Permitir**).
+- O aplicativo define internamente `java.net.preferIPv4Stack=true` em tempo de execucao e nos scripts `.command` para garantir total compatibilidade de descoberta UDP entre macOS e Windows.
+
 ## Escopo e limitacoes conhecidas
 
 - Sem relay/NAT traversal: o Client conecta direto no IP:porta do Servidor (mesma rede local ou VPN tipo Tailscale).
-- O controle remoto (tela/mouse/teclado) exige que a sessao do Windows no Client esteja **desbloqueada e ativa** — nao funciona com a tela de bloqueio (Win+L) ou apos suspensao, pela mesma limitacao que afeta qualquer app baseado em `java.awt.Robot`. Apenas desligar o monitor (sem bloquear/suspender) nao afeta o funcionamento.
+- O controle remoto (tela/mouse/teclado) exige que a sessao no Client esteja **desbloqueada e ativa** — nao funciona com a tela de bloqueio ou apos suspensao, pela mesma limitacao que afeta qualquer app baseado em `java.awt.Robot`. Apenas desligar o monitor (sem bloquear/suspender) nao afeta o funcionamento.
 - Compartilhamento de camera nao esta implementado (exigiria um driver de camera virtual nativo, fora do escopo de um app Java puro).
+
