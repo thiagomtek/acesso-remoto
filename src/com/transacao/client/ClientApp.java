@@ -93,6 +93,7 @@ public class ClientApp extends JFrame {
     private Thread receiverThread;
     private File selectedFile;
     private ClipboardSync clipboardSync;
+    private volatile boolean clipboardSyncEnabledByServer = true;
     private InputInjector inputInjector;
     private ScreenStreamer screenStreamer;
     private Thread screenStreamerThread;
@@ -682,6 +683,8 @@ public class ClientApp extends JFrame {
                     }));
                     receiver.setUpdateExtrasListener(zipBytes -> SwingUtilities.invokeLater(() -> applyUpdateExtras(zipBytes)));
                     receiver.setUpdateListener(newJarBytes -> SwingUtilities.invokeLater(() -> applyUpdate(newJarBytes)));
+                    receiver.setClipboardSyncEnabledListener(enabled ->
+                            SwingUtilities.invokeLater(() -> setClipboardSyncEnabledByServer(enabled)));
                     receiver.setRemoteControlListener(new RemoteControlListener() {
                         @Override
                         public void onStartRequested() {
@@ -738,37 +741,8 @@ public class ClientApp extends JFrame {
                             withInjector(injector -> injector.typeChar(c));
                         }
                     });
-                    clipboardSync = new ClipboardSync(new ClipboardSync.Sender() {
-                        @Override
-                        public void sendText(String text) {
-                            trySendRemote(() -> {
-                                RemoteMessageSender.sendClipboardText(out, writeLock, text);
-                                log("Area de transferencia enviada ao servidor.");
-                            });
-                        }
-
-                        @Override
-                        public void sendFiles(byte[] zipBytes) {
-                            trySendRemote(() -> {
-                                RemoteMessageSender.sendClipboardFiles(out, writeLock, zipBytes);
-                                log("Arquivos copiados enviados ao servidor (" + zipBytes.length + " bytes).");
-                            });
-                        }
-                    }, outputDir);
-                    clipboardSync.setErrorListener(ClientApp.this::log);
-                    receiver.setClipboardListener(new ClipboardListener() {
-                        @Override
-                        public void onClipboardText(String text) {
-                            clipboardSync.applyRemoteText(text);
-                            log("Area de transferencia recebida do servidor.");
-                        }
-
-                        @Override
-                        public void onClipboardFiles(byte[] zipBytes) {
-                            clipboardSync.applyRemoteFiles(zipBytes);
-                            log("Arquivos copiados recebidos do servidor (" + zipBytes.length + " bytes).");
-                        }
-                    });
+                    clipboardSyncEnabledByServer = true;
+                    refreshClipboardSync();
                     receiver.setMicAudioListener(new AudioChannelListener() {
                         @Override
                         public void onStart(AudioFormat format) {
@@ -852,6 +826,59 @@ public class ClientApp extends JFrame {
         sysAudioStopButton.setEnabled(false);
         sysAudioStatusLabel.setText("Audio do sistema parado");
         micPlaybackStatusLabel.setText("Sem microfone remoto");
+    }
+
+    /** Ativa ou interrompe imediatamente a sincronizacao conforme a configuracao do servidor. */
+    private void setClipboardSyncEnabledByServer(boolean enabled) {
+        clipboardSyncEnabledByServer = enabled;
+        refreshClipboardSync();
+        log("Copia e cola da area de transferencia " + (enabled ? "habilitada pelo servidor." : "desabilitada pelo servidor."));
+    }
+
+    private void refreshClipboardSync() {
+        if (receiver != null) {
+            receiver.setClipboardListener(null);
+        }
+        if (clipboardSync != null) {
+            clipboardSync.stop();
+            clipboardSync = null;
+        }
+        if (!clipboardSyncEnabledByServer || receiver == null || out == null) {
+            return;
+        }
+
+        ClipboardSync sync = new ClipboardSync(new ClipboardSync.Sender() {
+            @Override
+            public void sendText(String text) {
+                trySendRemote(() -> {
+                    RemoteMessageSender.sendClipboardText(out, writeLock, text);
+                    log("Area de transferencia enviada ao servidor.");
+                });
+            }
+
+            @Override
+            public void sendFiles(byte[] zipBytes) {
+                trySendRemote(() -> {
+                    RemoteMessageSender.sendClipboardFiles(out, writeLock, zipBytes);
+                    log("Arquivos copiados enviados ao servidor (" + zipBytes.length + " bytes).");
+                });
+            }
+        }, new File(outputDirField.getText().trim()));
+        sync.setErrorListener(ClientApp.this::log);
+        receiver.setClipboardListener(new ClipboardListener() {
+            @Override
+            public void onClipboardText(String text) {
+                sync.applyRemoteText(text);
+                log("Area de transferencia recebida do servidor.");
+            }
+
+            @Override
+            public void onClipboardFiles(byte[] zipBytes) {
+                sync.applyRemoteFiles(zipBytes);
+                log("Arquivos copiados recebidos do servidor (" + zipBytes.length + " bytes).");
+            }
+        });
+        clipboardSync = sync;
     }
 
     // Quando a conexao cai sozinha (sem ser por um clique em "Desconectar"),

@@ -36,6 +36,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.prefs.Preferences;
 import com.transacao.common.Protocol;
 
 /**
@@ -61,6 +62,8 @@ public class ServerApp extends JFrame {
     private final JProgressBar progressBar = new JProgressBar(0, 100);
     private final JTextArea logArea = new JTextArea();
     private final JLabel statusLabel = new JLabel("Parado");
+    private final JCheckBox clipboardSyncEnabledCheck = new JCheckBox(
+            "Habilitar copia e cola da area de transferencia", true);
 
     private final DefaultComboBoxModel<ClientSession> clientListModel = new DefaultComboBoxModel<>();
     private final JComboBox<ClientSession> clientSelector = new JComboBox<>(clientListModel);
@@ -100,33 +103,16 @@ public class ServerApp extends JFrame {
     private final TeamsAlertController teamsAlert = new TeamsAlertController(this::log);
     private AudioStreamer micStreamer;
     private Thread micStreamerThread;
+    private final Preferences prefs = Preferences.userNodeForPackage(ServerApp.class);
+    private static final String PREF_CLIPBOARD_SYNC_ENABLED = "clipboardSyncEnabled";
 
     public ServerApp() {
         super("Transacao - Servidor");
         buildUi();
+        clipboardSyncEnabledCheck.setSelected(prefs.getBoolean(PREF_CLIPBOARD_SYNC_ENABLED, true));
         wireActions();
         refreshTransferUi();
-        installClipboardActivityTracking();
         teamsAlert.start();
-    }
-
-    /**
-     * Repassa o estado minimizado da janela para o ClipboardSync, para so
-     * pausar a transferencia da area de transferencia quando a janela do
-     * Servidor estiver minimizada (fora de vista) - so trocar de foco para
-     * outro programa (Alt+Tab) sem minimizar continua sincronizando
-     * normalmente.
-     */
-    private void installClipboardActivityTracking() {
-        addWindowStateListener(e -> updateClipboardWindowActive());
-    }
-
-    private void updateClipboardWindowActive() {
-        if (clipboardSync == null) {
-            return;
-        }
-        boolean iconified = (getExtendedState() & JFrame.ICONIFIED) != 0;
-        clipboardSync.setWindowActive(!iconified);
     }
 
     private void buildUi() {
@@ -145,6 +131,7 @@ public class ServerApp extends JFrame {
         tabs.addTab("Transferencia de Arquivos", buildTransferTab());
         tabs.addTab("Acesso Remoto", buildRemoteTab());
         tabs.addTab("Audio", buildAudioTab());
+        tabs.addTab("Configuracoes", buildSettingsTab());
         add(tabs, BorderLayout.CENTER);
 
         // Usa a resolucao FISICA do monitor (igual ao ScreenStreamer), em vez de
@@ -163,6 +150,34 @@ public class ServerApp extends JFrame {
         setBounds(screenBounds.x + insets.left, screenBounds.y + insets.top,
                 screenBounds.width - insets.left - insets.right,
                 screenBounds.height - insets.top - insets.bottom);
+    }
+
+    private JPanel buildSettingsTab() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+
+        JPanel clipboardPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        clipboardPanel.setBorder(BorderFactory.createTitledBorder("Area de transferencia"));
+        clipboardPanel.add(clipboardSyncEnabledCheck);
+
+        GridBagConstraints c = new GridBagConstraints();
+        c.gridx = 0;
+        c.gridy = 0;
+        c.weightx = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        c.anchor = GridBagConstraints.NORTHWEST;
+        c.insets = new Insets(0, 0, 10, 0);
+        panel.add(clipboardPanel, c);
+
+        c.gridy = 1;
+        c.insets = new Insets(0, 0, 0, 0);
+        panel.add(teamsAlert.buildSettingsPanel(), c);
+
+        c.gridy = 2;
+        c.weighty = 1;
+        c.fill = GridBagConstraints.VERTICAL;
+        panel.add(Box.createVerticalGlue(), c);
+        return panel;
     }
 
     private JPanel buildTransferTab() {
@@ -350,7 +365,6 @@ public class ServerApp extends JFrame {
         fullscreenWindow = null;
         fullscreenTopBar = null;
         fullscreenButton.setEnabled(true);
-        updateClipboardWindowActive();
     }
 
     private JPanel buildAudioTab() {
@@ -406,13 +420,10 @@ public class ServerApp extends JFrame {
         sec.gridy = 1;
         panel.add(remoteAudioPanel, sec);
 
-        sec.gridy = 2;
-        panel.add(teamsAlert.buildSettingsPanel(), sec);
-
         // Empurra as secoes pro topo em vez de esticarem pra preencher a aba.
         GridBagConstraints glue = new GridBagConstraints();
         glue.gridx = 0;
-        glue.gridy = 3;
+        glue.gridy = 2;
         glue.weighty = 1;
         glue.fill = GridBagConstraints.VERTICAL;
         panel.add(Box.createVerticalGlue(), glue);
@@ -444,6 +455,14 @@ public class ServerApp extends JFrame {
         micStopButton.addActionListener(e -> stopMic());
         micStartButton.setEnabled(false);
         micStopButton.setEnabled(false);
+
+        clipboardSyncEnabledCheck.addActionListener(e -> {
+            boolean enabled = clipboardSyncEnabledCheck.isSelected();
+            prefs.putBoolean(PREF_CLIPBOARD_SYNC_ENABLED, enabled);
+            refreshClipboardSync();
+            notifyClientsClipboardSyncPreference();
+            log("Copia e cola da area de transferencia " + (enabled ? "habilitada." : "desabilitada."));
+        });
 
         clientSelector.addActionListener(e -> {
             ClientSession selected = (ClientSession) clientSelector.getSelectedItem();
@@ -653,10 +672,10 @@ public class ServerApp extends JFrame {
 
             sessionReceiver.setHelloListener((name, jarHash) -> {
                 session.displayName = name + " (" + socket.getInetAddress().getHostAddress() + ")";
-                session.jarHash = jarHash;
-                SwingUtilities.invokeLater(() -> {
-                    refreshClientList();
-                    checkForClientUpdate(session);
+            session.jarHash = jarHash;
+            SwingUtilities.invokeLater(() -> {
+                refreshClientList();
+                checkForClientUpdate(session);
                 });
             });
             sessionReceiver.setDisconnectListener(() -> SwingUtilities.invokeLater(() -> removeSession(session)));
@@ -749,6 +768,7 @@ public class ServerApp extends JFrame {
      */
     private void checkForClientUpdate(ClientSession session) {
         if (session.jarHash == null || "dev".equals(session.jarHash) || "unknown".equals(session.jarHash)) {
+            sendClipboardSyncPreference(session);
             return;
         }
         File updateJar = new File(updateJarField.getText().trim());
@@ -759,6 +779,7 @@ public class ServerApp extends JFrame {
             String latestHash = JarUtils.sha256(updateJar);
             if (latestHash.equals(session.jarHash)) {
                 sendExtrasIfNeeded(session, latestHash);
+                sendClipboardSyncPreference(session);
                 return;
             }
 
@@ -811,12 +832,8 @@ public class ServerApp extends JFrame {
 
         if (activeSession != null) {
             activeSession.receiver.setRemoteFrameListener(null);
-            activeSession.receiver.setClipboardListener(null);
+            stopClipboardSync();
             activeSession.receiver.setSystemAudioListener(null);
-            if (clipboardSync != null) {
-                clipboardSync.stop();
-                clipboardSync = null;
-            }
             if (micStreamer != null) {
                 DataOutputStream prevOut = activeSession.out;
                 Object prevLock = activeSession.writeLock;
@@ -875,39 +892,7 @@ public class ServerApp extends JFrame {
             }
         });
 
-        File outputDir = new File(outputDirField.getText().trim());
-        clipboardSync = new ClipboardSync(new ClipboardSync.Sender() {
-            @Override
-            public void sendText(String text) {
-                trySendRemote(o -> {
-                    RemoteMessageSender.sendClipboardText(out, writeLock, text);
-                    log("Area de transferencia enviada ao client.");
-                });
-            }
-
-            @Override
-            public void sendFiles(byte[] zipBytes) {
-                trySendRemote(o -> {
-                    RemoteMessageSender.sendClipboardFiles(out, writeLock, zipBytes);
-                    log("Arquivos copiados enviados ao client (" + zipBytes.length + " bytes).");
-                });
-            }
-        }, outputDir);
-        clipboardSync.setErrorListener(this::log);
-        updateClipboardWindowActive();
-        session.receiver.setClipboardListener(new com.transacao.common.remote.ClipboardListener() {
-            @Override
-            public void onClipboardText(String text) {
-                clipboardSync.applyRemoteText(text);
-                log("Area de transferencia recebida do client.");
-            }
-
-            @Override
-            public void onClipboardFiles(byte[] zipBytes) {
-                clipboardSync.applyRemoteFiles(zipBytes);
-                log("Arquivos copiados recebidos do client (" + zipBytes.length + " bytes).");
-            }
-        });
+        refreshClipboardSync();
         session.receiver.setTeamsActivityListener(new com.transacao.common.remote.TeamsActivityListener() {
             @Override
             public void onActivityDetected() {
@@ -952,6 +937,82 @@ public class ServerApp extends JFrame {
         });
 
         log("Client ativo agora: " + session.displayName);
+    }
+
+    /** Envia a preferencia somente a clients que entendem este tipo novo de mensagem. */
+    private void notifyClientsClipboardSyncPreference() {
+        for (ClientSession session : sessions) {
+            if (isSessionUpToDate(session)) {
+                sendClipboardSyncPreference(session);
+            }
+        }
+    }
+
+    private void sendClipboardSyncPreference(ClientSession session) {
+        // Antes do hello ainda nao sabemos a versao do client; enviar um tipo
+        // novo nesse ponto poderia derrubar um jar antigo.
+        if (session.jarHash == null || !isSessionUpToDate(session)) {
+            return;
+        }
+        try {
+            RemoteMessageSender.sendClipboardSyncEnabled(
+                    session.out, session.writeLock, clipboardSyncEnabledCheck.isSelected());
+        } catch (Exception ex) {
+            log("Erro ao enviar preferencia de clipboard para " + session.displayName + ": " + ex.getMessage());
+        }
+    }
+
+    /** Aplica a preferencia de clipboard a sessao ativa, inclusive durante uma conexao ja estabelecida. */
+    private void refreshClipboardSync() {
+        stopClipboardSync();
+        if (activeSession == null || !clipboardSyncEnabledCheck.isSelected()) {
+            return;
+        }
+
+        ClientSession session = activeSession;
+        File outputDir = new File(outputDirField.getText().trim());
+        ClipboardSync sync = new ClipboardSync(new ClipboardSync.Sender() {
+            @Override
+            public void sendText(String text) {
+                trySendRemote(o -> {
+                    RemoteMessageSender.sendClipboardText(out, writeLock, text);
+                    log("Area de transferencia enviada ao client.");
+                });
+            }
+
+            @Override
+            public void sendFiles(byte[] zipBytes) {
+                trySendRemote(o -> {
+                    RemoteMessageSender.sendClipboardFiles(out, writeLock, zipBytes);
+                    log("Arquivos copiados enviados ao client (" + zipBytes.length + " bytes).");
+                });
+            }
+        }, outputDir);
+        sync.setErrorListener(this::log);
+        session.receiver.setClipboardListener(new com.transacao.common.remote.ClipboardListener() {
+            @Override
+            public void onClipboardText(String text) {
+                sync.applyRemoteText(text);
+                log("Area de transferencia recebida do client.");
+            }
+
+            @Override
+            public void onClipboardFiles(byte[] zipBytes) {
+                sync.applyRemoteFiles(zipBytes);
+                log("Arquivos copiados recebidos do client (" + zipBytes.length + " bytes).");
+            }
+        });
+        clipboardSync = sync;
+    }
+
+    private void stopClipboardSync() {
+        if (activeSession != null) {
+            activeSession.receiver.setClipboardListener(null);
+        }
+        if (clipboardSync != null) {
+            clipboardSync.stop();
+            clipboardSync = null;
+        }
     }
 
     private void disconnectActiveClient() {
@@ -1144,8 +1205,8 @@ public class ServerApp extends JFrame {
         System.setProperty("java.net.preferIPv4Stack", "true");
         SwingUtilities.invokeLater(() -> {
             ServerApp app = new ServerApp();
-            app.stopButton.setEnabled(false);
             app.setVisible(true);
+            app.startServer();
         });
     }
 }

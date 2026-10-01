@@ -45,7 +45,6 @@ public class ClipboardSync implements FlavorListener {
     private volatile String lastKnownFilesFingerprint;
     private volatile boolean applyingRemoteChange = false;
     private volatile boolean running = true;
-    private volatile boolean windowActive = true;
     private volatile Consumer<String> errorListener;
     private final Thread pollThread;
 
@@ -92,28 +91,6 @@ public class ClipboardSync implements FlavorListener {
         clipboard.removeFlavorListener(this);
     }
 
-    /**
-     * Liga/desliga o monitoramento continuo da area de transferencia conforme
-     * a janela deste app esta em primeiro plano (visivel e nao minimizada) ou
-     * nao - para nao ficar de olho no clipboard o tempo todo enquanto o app
-     * esta minimizado em segundo plano.
-     *
-     * Ao voltar ao primeiro plano, verifica o que esta no clipboard NESTE
-     * MOMENTO e transfere se for diferente do que ja foi sincronizado antes -
-     * e o mesmo comportamento de qualquer ferramenta de acesso remoto (copiar
-     * um arquivo no Explorer e trocar para esta janela para colar so funciona
-     * se o que foi copiado durante a troca de foco nao for descartado).
-     */
-    public synchronized void setWindowActive(boolean active) {
-        if (active == windowActive) {
-            return;
-        }
-        windowActive = active;
-        if (active) {
-            checkLocalClipboard();
-        }
-    }
-
     @Override
     public void flavorsChanged(FlavorEvent e) {
         checkLocalClipboard();
@@ -135,7 +112,7 @@ public class ClipboardSync implements FlavorListener {
     }
 
     private synchronized void checkLocalClipboard() {
-        if (applyingRemoteChange || !windowActive) {
+        if (applyingRemoteChange) {
             return;
         }
         try {

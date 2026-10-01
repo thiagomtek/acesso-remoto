@@ -18,7 +18,7 @@ Depois de conectados, qualquer um dos dois lados pode enviar arquivos/pastas par
 - O **Client compartilha a propria tela**; o **Servidor visualiza e controla** (mouse/teclado).
 - Transmissao em blocos (tiles) que so reenvia o que muda na tela, comprimidos sem perdas (PNG) — sem os artefatos de blocagem do JPEG, com pouco trafego.
 - Captura na resolucao fisica real do monitor (nao a reduzida pela escala do Windows), para manter nitidez em telas com escala 125%/150%.
-- Area de transferencia (clipboard) sincronizada nos dois sentidos: texto e arquivos copiados em qualquer lado ficam disponiveis para colar no outro.
+- Area de transferencia (clipboard) sincronizada nos dois sentidos: texto e arquivos copiados em qualquer lado ficam disponiveis para colar no outro. Na aba **Configuracoes** do Servidor, essa sincronizacao pode ser habilitada ou desabilitada para todos os clients conectados.
 
 ### Audio
 - O **Servidor pode compartilhar seu microfone** com o Client.

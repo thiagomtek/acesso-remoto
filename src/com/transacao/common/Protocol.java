@@ -92,6 +92,9 @@ public final class Protocol {
     /** Tamanho efetivamente capturado/codificado agora pelo client (pode ser menor que REMOTE_SCREEN_SIZE, se adaptado ao viewport). */
     public static final byte REMOTE_STREAM_SIZE = 73;
 
+    /** Informa ao client se a sincronizacao de clipboard foi habilitada no servidor. */
+    public static final byte REMOTE_CLIPBOARD_SYNC_ENABLED = 74;
+
     private Protocol() {
     }
 }

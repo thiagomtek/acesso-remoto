@@ -42,6 +42,7 @@ public class FileTransferReceiver implements Runnable {
     private volatile RemoteFrameListener remoteFrameListener;
     private volatile RemoteControlListener remoteControlListener;
     private volatile ClipboardListener clipboardListener;
+    private volatile Consumer<Boolean> clipboardSyncEnabledListener;
     private volatile com.transacao.common.remote.TeamsActivityListener teamsActivityListener;
     private volatile AudioChannelListener micAudioListener;
     private volatile AudioChannelListener systemAudioListener;
@@ -69,6 +70,11 @@ public class FileTransferReceiver implements Runnable {
     /** Registrado por qualquer um dos dois lados, para sincronizar a area de transferencia. */
     public void setClipboardListener(ClipboardListener clipboardListener) {
         this.clipboardListener = clipboardListener;
+    }
+
+    /** Registrado pelo client para aplicar a preferencia de clipboard definida no servidor. */
+    public void setClipboardSyncEnabledListener(Consumer<Boolean> clipboardSyncEnabledListener) {
+        this.clipboardSyncEnabledListener = clipboardSyncEnabledListener;
     }
 
     /** Registrado por quem CONTROLA, para ser avisado de atividade nova no Teams do client. */
@@ -294,6 +300,13 @@ public class FileTransferReceiver implements Runnable {
                 in.readFully(zipBytes);
                 if (clipboardListener != null) {
                     clipboardListener.onClipboardFiles(zipBytes);
+                }
+                return true;
+            }
+            case Protocol.REMOTE_CLIPBOARD_SYNC_ENABLED: {
+                boolean enabled = in.readBoolean();
+                if (clipboardSyncEnabledListener != null) {
+                    clipboardSyncEnabledListener.accept(enabled);
                 }
                 return true;
             }

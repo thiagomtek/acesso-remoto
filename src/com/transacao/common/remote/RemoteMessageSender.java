@@ -139,6 +139,14 @@ public final class RemoteMessageSender {
         }
     }
 
+    public static void sendClipboardSyncEnabled(DataOutputStream out, Object writeLock, boolean enabled) throws IOException {
+        synchronized (writeLock) {
+            out.writeByte(Protocol.REMOTE_CLIPBOARD_SYNC_ENABLED);
+            out.writeBoolean(enabled);
+            out.flush();
+        }
+    }
+
     public static void sendMicStart(DataOutputStream out, Object writeLock, AudioFormat format) throws IOException {
         synchronized (writeLock) {
             out.writeByte(Protocol.REMOTE_MIC_START);
