@@ -246,26 +246,43 @@ public class ServerApp extends JFrame {
         GraphicsDevice device = gc != null ? gc.getDevice()
                 : GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
         Rectangle bounds = device.getDefaultConfiguration().getBounds();
-        trySendRemote(o -> RemoteMessageSender.sendViewportSize(out, writeLock, new Dimension(bounds.width, bounds.height)));
+        if (isActiveClientUpToDate()) {
+            trySendRemote(o -> RemoteMessageSender.sendViewportSize(out, writeLock, new Dimension(bounds.width, bounds.height)));
+        }
+
+        boolean isMac = System.getProperty("os.name", "").toLowerCase().contains("mac");
 
         fullscreenWindow = new JFrame(device.getDefaultConfiguration());
         fullscreenWindow.setUndecorated(true);
         fullscreenWindow.setLayout(new BorderLayout());
 
-        // Barra escondida por padrao (igual a Area de Trabalho Remota nativa do
-        // Windows): so aparece quando o mouse encosta no topo-centro da tela, e
-        // some de novo quando o mouse se afasta - nao fica ocupando espaco da
-        // imagem remota o tempo todo.
+        // Barra escondida por padrao: aparece quando o mouse encosta no topo-centro da tela.
+        // No macOS, adiciona margem superior de 28px para que a barra de menus do sistema
+        // nao sobreponha o botao quando o cursor se aproxima do topo.
         fullscreenTopBar = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
         fullscreenTopBar.setBackground(Color.DARK_GRAY);
-        JButton exitButton = new JButton("Sair da tela cheia");
+        if (isMac) {
+            fullscreenTopBar.setBorder(BorderFactory.createEmptyBorder(28, 8, 6, 8));
+        }
+        JButton exitButton = new JButton("Sair da tela cheia (F11)");
         exitButton.addActionListener(e -> exitFullscreen());
-        // Nao pode ser focavel - senao o Tab do teclado remoto move o foco para
-        // esse botao em vez de ser encaminhado para a maquina remota.
+        // Nao pode ser focavel - senao o Tab do teclado remoto move o foco para esse botao
         exitButton.setFocusable(false);
         fullscreenTopBar.add(exitButton);
         fullscreenTopBar.setVisible(false);
         fullscreenBarVisible = false;
+
+        // Atalhos de teclado universais para sair da tela cheia a qualquer momento
+        KeyStroke f11Key = KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F11, 0);
+        KeyStroke shiftEscKey = KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ESCAPE, java.awt.event.KeyEvent.SHIFT_DOWN_MASK);
+        fullscreenWindow.getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(f11Key, "EXIT_FS");
+        fullscreenWindow.getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(shiftEscKey, "EXIT_FS");
+        fullscreenWindow.getRootPane().getActionMap().put("EXIT_FS", new AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                exitFullscreen();
+            }
+        });
 
         remoteViewerHolder.remove(remoteViewerPanel);
         fullscreenWindow.add(fullscreenTopBar, BorderLayout.NORTH);
@@ -280,14 +297,13 @@ public class ServerApp extends JFrame {
     }
 
     /**
-     * Fica de olho na posicao do cursor (por polling, independente de qual
-     * componente esta por baixo do mouse) para mostrar a barra de opcoes so
-     * quando o cursor encosta numa faixa estreita no topo-centro da tela, e
-     * escondê-la quando o cursor se afasta - do mesmo jeito que a barra de
-     * conexao da Area de Trabalho Remota nativa do Windows funciona.
+     * Fica de olho na posicao do cursor para mostrar a barra de opcoes
+     * quando o cursor encosta no topo-centro da tela, e escondê-la quando se afasta.
      */
     private void startFullscreenHoverWatcher(Rectangle windowBounds) {
-        int hotZoneHalfWidth = 220;
+        boolean isMac = System.getProperty("os.name", "").toLowerCase().contains("mac");
+        int hotZoneHalfWidth = 240;
+        int triggerTopZone = isMac ? 32 : 8;
         fullscreenHoverTimer = new Timer(150, e -> {
             if (fullscreenWindow == null) {
                 return;
@@ -298,15 +314,15 @@ public class ServerApp extends JFrame {
             int centerX = windowBounds.width / 2;
 
             if (!fullscreenBarVisible) {
-                boolean inHotZone = localY <= 6 && Math.abs(localX - centerX) <= hotZoneHalfWidth;
+                boolean inHotZone = localY <= triggerTopZone && Math.abs(localX - centerX) <= hotZoneHalfWidth;
                 if (inHotZone) {
                     fullscreenBarVisible = true;
                     fullscreenTopBar.setVisible(true);
                     fullscreenWindow.revalidate();
                 }
             } else {
-                int barHeight = Math.max(fullscreenTopBar.getHeight(), 32);
-                boolean stillNearTop = localY <= barHeight + 24;
+                int barHeight = Math.max(fullscreenTopBar.getHeight(), isMac ? 60 : 32);
+                boolean stillNearTop = localY <= barHeight + (isMac ? 35 : 24);
                 if (!stillNearTop) {
                     fullscreenBarVisible = false;
                     fullscreenTopBar.setVisible(false);
@@ -499,8 +515,12 @@ public class ServerApp extends JFrame {
             RemoteMessageSender.sendStart(out, writeLock);
             // Adianta pro client a resolucao do nosso monitor: mesmo antes de ir
             // pra tela cheia, nunca vale a pena transmitir mais pixels do que
-            // esse monitor consegue mostrar.
-            RemoteMessageSender.sendViewportSize(out, writeLock, currentServerScreenSize());
+            // esse monitor consegue mostrar. So manda se temos certeza que o
+            // client entende essa mensagem (ver isActiveClientUpToDate) -
+            // senao ele derruba a conexao por nao reconhecer o tipo.
+            if (isActiveClientUpToDate()) {
+                RemoteMessageSender.sendViewportSize(out, writeLock, currentServerScreenSize());
+            }
             log("Pedido de controle remoto enviado ao client.");
         });
     }
@@ -682,11 +702,50 @@ public class ServerApp extends JFrame {
     private static final long UPDATE_RETRY_COOLDOWN_MS = 60_000;
     private final Map<String, Long> lastUpdateAttemptByIp = new ConcurrentHashMap<>();
 
+    // Protocolo binario sem versionamento embutido: um client rodando jar
+    // antigo nao reconhece um tipo de mensagem novo e DERRUBA A CONEXAO (nao
+    // tem como "pular" com seguranca bytes de um tipo desconhecido sem saber
+    // o tamanho dele) - ja causou loop de reconexao em producao duas vezes
+    // (REMOTE_VIEWPORT_SIZE e UPDATE_EXTRAS_PUSH). Por isso, tipos de
+    // mensagem introduzidos depois do lancamento inicial SO podem ser
+    // enviados quando temos certeza (hash do jar bate exatamente com o
+    // "mais recente" configurado) que o client entende - senao so o
+    // UPDATE_PUSH puro (jar), que sempre existiu e todo client entende,
+    // pode ser usado para trazer o client pra versao atual primeiro.
+    private final Map<String, String> extrasSentHashByIp = new ConcurrentHashMap<>();
+
+    /** true se o client ATIVO esta rodando exatamente o jar configurado como "mais recente" - seguro usar mensagens de protocolo novas com ele. */
+    private boolean isActiveClientUpToDate() {
+        if (activeSession == null) {
+            return false;
+        }
+        return isSessionUpToDate(activeSession);
+    }
+
+    private boolean isSessionUpToDate(ClientSession session) {
+        String jarHash = session.jarHash;
+        if (jarHash == null || "dev".equals(jarHash) || "unknown".equals(jarHash)) {
+            return true; // build local/dev, sem hash configurado pra comparar - assume compativel
+        }
+        try {
+            File updateJar = new File(updateJarField.getText().trim());
+            if (!updateJar.isFile()) {
+                return true;
+            }
+            return JarUtils.sha256(updateJar).equals(jarHash);
+        } catch (Exception ex) {
+            return true;
+        }
+    }
+
     /**
      * Compara o hash do jar que o client reportou no hello com o hash do
-     * jar configurado em "Jar do client mais recente"; se forem diferentes,
-     * envia a nova versao automaticamente e o client se auto-atualiza e
-     * reinicia sozinho.
+     * jar configurado em "Jar do client mais recente". Se forem diferentes,
+     * manda SO o jar (UPDATE_PUSH, sempre compativel) para o client se
+     * auto-atualizar e reiniciar sozinho. Se ja estiverem iguais, manda os
+     * certificados/scripts (UPDATE_EXTRAS_PUSH) - so chega a esse ponto
+     * quando o client com certeza ja entende esse tipo de mensagem, porque
+     * esta rodando o jar mais recente.
      */
     private void checkForClientUpdate(ClientSession session) {
         if (session.jarHash == null || "dev".equals(session.jarHash) || "unknown".equals(session.jarHash)) {
@@ -696,35 +755,49 @@ public class ServerApp extends JFrame {
         if (!updateJar.isFile()) {
             return;
         }
-        String ip = session.socket.getInetAddress().getHostAddress();
-        long now = System.currentTimeMillis();
-        Long lastAttempt = lastUpdateAttemptByIp.get(ip);
-        if (lastAttempt != null && now - lastAttempt < UPDATE_RETRY_COOLDOWN_MS) {
-            return;
-        }
         try {
             String latestHash = JarUtils.sha256(updateJar);
             if (latestHash.equals(session.jarHash)) {
+                sendExtrasIfNeeded(session, latestHash);
+                return;
+            }
+
+            String ip = session.socket.getInetAddress().getHostAddress();
+            long now = System.currentTimeMillis();
+            Long lastAttempt = lastUpdateAttemptByIp.get(ip);
+            if (lastAttempt != null && now - lastAttempt < UPDATE_RETRY_COOLDOWN_MS) {
                 return;
             }
             lastUpdateAttemptByIp.put(ip, now);
-            // Certificados/scripts (.bat/.vbs/.ps1) mudam junto com releases do
-            // jar, entao vao sempre juntos aqui - senao o client ficava com
-            // lancadores/certs desatualizados mesmo depois de "atualizar" (ex:
-            // inicializacao automatica com um script velho, nunca corrigido).
-            File extrasZip = new File(updateJar.getParentFile(), "transacao-client-extras.zip");
-            if (extrasZip.isFile()) {
-                byte[] extrasBytes = Files.readAllBytes(extrasZip.toPath());
-                RemoteMessageSender.sendUpdateExtrasPush(session.out, session.writeLock, extrasBytes);
-                log("Certificados/scripts atualizados enviados a " + session.displayName
-                        + " (" + extrasBytes.length + " bytes).");
-            }
+
             byte[] jarBytes = Files.readAllBytes(updateJar.toPath());
             RemoteMessageSender.sendUpdatePush(session.out, session.writeLock, jarBytes);
             log("Client " + session.displayName + " esta desatualizado - nova versao enviada ("
                     + jarBytes.length + " bytes). Ele vai se atualizar e reiniciar sozinho.");
         } catch (Exception ex) {
             log("Erro ao verificar/enviar atualizacao para " + session.displayName + ": " + ex.getMessage());
+        }
+    }
+
+    /** So chamado quando session.jarHash ja bate com o jar mais recente - seguro mandar UPDATE_EXTRAS_PUSH. */
+    private void sendExtrasIfNeeded(ClientSession session, String latestHash) {
+        String ip = session.socket.getInetAddress().getHostAddress();
+        if (latestHash.equals(extrasSentHashByIp.get(ip))) {
+            return; // ja mandado pra essa maquina nessa versao
+        }
+        File updateJar = new File(updateJarField.getText().trim());
+        File extrasZip = new File(updateJar.getParentFile(), "transacao-client-extras.zip");
+        if (!extrasZip.isFile()) {
+            return;
+        }
+        try {
+            byte[] extrasBytes = Files.readAllBytes(extrasZip.toPath());
+            RemoteMessageSender.sendUpdateExtrasPush(session.out, session.writeLock, extrasBytes);
+            extrasSentHashByIp.put(ip, latestHash);
+            log("Certificados/scripts atualizados enviados a " + session.displayName
+                    + " (" + extrasBytes.length + " bytes).");
+        } catch (Exception ex) {
+            log("Erro ao enviar certificados/scripts atualizados para " + session.displayName + ": " + ex.getMessage());
         }
     }
 
@@ -1068,6 +1141,7 @@ public class ServerApp extends JFrame {
     }
 
     public static void main(String[] args) {
+        System.setProperty("java.net.preferIPv4Stack", "true");
         SwingUtilities.invokeLater(() -> {
             ServerApp app = new ServerApp();
             app.stopButton.setEnabled(false);

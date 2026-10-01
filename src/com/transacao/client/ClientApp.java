@@ -1115,6 +1115,7 @@ public class ClientApp extends JFrame {
             "33d8409460375496ba3f9fc38626c31f511c1243a56ac1f590c6c07e302e28be";
 
     public static void main(String[] args) {
+        System.setProperty("java.net.preferIPv4Stack", "true");
         boolean isBackground = false;
         if (args != null) {
             for (String arg : args) {

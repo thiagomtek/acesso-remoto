@@ -139,11 +139,10 @@ public class DiscoveryClient {
             }
         } catch (SocketException ignored) {
         }
-        if (result.isEmpty()) {
-            try {
-                result.add(InetAddress.getByName("255.255.255.255"));
-            } catch (Exception ignored) {
-            }
+        // Sempre adiciona o broadcast global como garantia
+        try {
+            result.add(InetAddress.getByName("255.255.255.255"));
+        } catch (Exception ignored) {
         }
         return result;
     }

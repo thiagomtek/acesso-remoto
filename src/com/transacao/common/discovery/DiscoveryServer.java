@@ -35,8 +35,10 @@ public class DiscoveryServer implements Runnable {
     @Override
     public void run() {
         try {
-            socket = new DatagramSocket(DISCOVERY_PORT);
+            socket = new DatagramSocket(null);
+            socket.setReuseAddress(true);
             socket.setBroadcast(true);
+            socket.bind(new java.net.InetSocketAddress(InetAddress.getByName("0.0.0.0"), DISCOVERY_PORT));
             byte[] buffer = new byte[256];
             while (running) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
