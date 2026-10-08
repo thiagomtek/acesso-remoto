@@ -25,7 +25,7 @@ body.viewing { overflow: hidden; }
   opacity: .78;
   font-variant-numeric: tabular-nums;
   text-shadow: 0 0 2px #000, 0 0 4px #000, 1px 1px 0 #000;
-  white-space: pre-line;
+  white-space: pre-wrap;
   background: rgba(0, 0, 0, .35);
   padding: 4px 6px;
   border-radius: 6px;

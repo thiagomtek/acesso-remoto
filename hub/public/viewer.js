@@ -1045,26 +1045,30 @@ export class Viewer {
     this.msg.textContent = 'Modo compatível: ' + (reason || 'WebRTC indisponível') + '. Aguardando imagem…';
     this.msg.hidden = false;
     clearTimeout(this.watch);
-    clearInterval(this.statsTimer);
-    this.statsTimer = setInterval(() => {
-      const now = performance.now();
-      const kbs = ((this.rxBytes - this.prevRx.bytes) / 1024) / ((now - this.prevRx.t) / 1000);
-      const fps = (this.rxFrames - this.prevRx.frames) / ((now - this.prevRx.t) / 1000);
-      this.prevRx = { bytes: this.rxBytes, frames: this.rxFrames, t: now };
-      this.probeCompatLatency();
-      const ping = this.compatPingMs == null ? 'medindo…' : `${Math.round(this.compatPingMs)} ms`;
-      const lines = [
-        'modo compatível',
-        this.hubRouteLabel(),
-        `${this.canvas.width}×${this.canvas.height}`,
-        `${kbs.toFixed(0)} KB/s`,
-        `${fps.toFixed(0)} quadros/s`,
-        `ping ${ping}`,
-        `jitter ${jitter}`,
-      ];
-      this.statsEl.textContent = lines.join('\n');
-    }, 1000);
+    this.updateCompatStats(performance.now(), false);
+    this.statsTimer = setInterval(() => this.updateCompatStats(), 1000);
+    this.statsTimer.unref?.();
     this.reportViewport();
+  }
+
+  updateCompatStats(now = performance.now(), probe = true) {
+    const elapsed = Math.max(0.001, (now - this.prevRx.t) / 1000);
+    const kbs = ((this.rxBytes - this.prevRx.bytes) / 1024) / elapsed;
+    const fps = (this.rxFrames - this.prevRx.frames) / elapsed;
+    this.prevRx = { bytes: this.rxBytes, frames: this.rxFrames, t: now };
+    if (probe) this.probeCompatLatency();
+    const ping = this.compatPingMs == null ? 'medindo…' : `${Math.round(this.compatPingMs)} ms`;
+    const jitter = this.compatJitterMs == null ? 'medindo…' : `${Math.round(this.compatJitterMs)} ms`;
+    const lines = [
+      'modo compatível',
+      this.hubRouteLabel(),
+      `${this.canvas.width}×${this.canvas.height}`,
+      `${kbs.toFixed(0)} KB/s`,
+      `${fps.toFixed(0)} quadros/s`,
+      `ping ${ping}`,
+      `jitter ${jitter}`,
+    ];
+    this.statsEl.textContent = lines.join('\n');
   }
 
   /** Frames binarios do hub: [0x01][sessionId 16 bytes] + mensagens do protocolo de blocos (big-endian). */
@@ -1287,11 +1291,16 @@ export class Viewer {
 
   startStats() {
     clearInterval(this.statsTimer);
-    this.statsTimer = setInterval(async () => {
+    const tick = async () => {
       if (!this.pc) return;
-      const report = await this.pc.getStats();
-      this.updateRtcStats(report);
-    }, 1000);
+      try {
+        const report = await this.pc.getStats();
+        if (report) this.updateRtcStats(report);
+      } catch { /* sessao fechando */ }
+    };
+    tick();
+    this.statsTimer = setInterval(tick, 1000);
+    this.statsTimer.unref?.();
   }
 
   /** Renderiza as estatisticas WebRTC. RTT e jitter sao segundos no getStats e viram ms no HUD. */

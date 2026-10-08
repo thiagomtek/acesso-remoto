@@ -1005,6 +1005,22 @@ test('modo compativel mede RTT e jitter por sonda confirmada pelo agente', () =>
   v.close(false);
 });
 
+test('modo compativel atualiza estatisticas na tela sem excecao', () => {
+  const { v } = openTouchViewer();
+  v.setClient({ ...client(), info: { hubRoute: 'lan' } });
+  v.updateCompatStats();
+  assert.match(v.statsEl.textContent, /modo compatível/);
+  assert.match(v.statsEl.textContent, /LAN direta/);
+  assert.match(v.statsEl.textContent, /ping/);
+  assert.match(v.statsEl.textContent, /jitter/);
+
+  v.onCompatPong({ n: v.compatProbe?.n || 0 });
+  v.updateCompatStats(performance.now() + 1000);
+  assert.match(v.statsEl.textContent, /quadros\/s/);
+  assert.match(v.statsEl.textContent, /KB\/s/);
+  v.close(false);
+});
+
 // ---------- teclado na tela (celular) ----------
 
 Object.defineProperty(window.Event.prototype, 'inputType', { configurable: true, get() { return this._it; } });
