@@ -15,11 +15,22 @@ body.viewing { overflow: hidden; }
 #viewer .vmsg { position: absolute; inset: 0; display: grid; place-items: center; color: #9aa3b2; pointer-events: none; text-align: center; padding: 24px; }
 #viewer .vmsg[hidden] { display: none; }
 
-/* HUD de estatisticas: translucido, sem fundo, nao captura cliques (como o indicador de FPS de jogos) */
-#viewer .vhud { position: absolute; top: 8px; left: 10px; z-index: 4; pointer-events: none; user-select: none; }
+/* HUD de estatisticas: coluna vertical no canto esquerdo (aproveita a barra lateral sem sobrepor o conteudo) */
+#viewer .vhud { position: absolute; top: 12px; left: 10px; z-index: 4; pointer-events: none; user-select: none; max-width: 140px; }
 #viewer .vhud[hidden] { display: none; }
-#viewer .vstats { font: 600 12px/1.3 ui-monospace, Consolas, monospace; color: #d6ffd6; opacity: .72; font-variant-numeric: tabular-nums;
-  text-shadow: 0 0 2px #000, 0 0 4px #000, 1px 1px 0 #000; white-space: nowrap; }
+#viewer .vstats {
+  display: inline-block;
+  font: 600 11px/1.35 ui-monospace, Consolas, monospace;
+  color: #d6ffd6;
+  opacity: .78;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 2px #000, 0 0 4px #000, 1px 1px 0 #000;
+  white-space: pre-line;
+  background: rgba(0, 0, 0, .35);
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+#viewer .vstats:empty { display: none; }
 
 /* Bolinha magica */
 #viewer .vorb { position: absolute; z-index: 8; width: 44px; height: 44px; padding: 0; border-radius: 50%; display: grid; place-items: center;
@@ -84,7 +95,9 @@ body.viewing { overflow: hidden; }
   #viewer .vshared-columns span:nth-child(3), #viewer .vshared-columns span:nth-child(4), #viewer .vshared-size, #viewer .vshared-modified { display: none; }
 }
 #viewer .vsettings-title { font-weight: 600; margin-bottom: 10px; }
-#viewer .settings { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 0; padding: 0; border: 0; }
+#viewer .settings { display: grid; grid-template-columns: 1fr; gap: 8px; margin: 0; padding: 0; border: 0; }
+#viewer .settings .settings-group-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted, #9aa3b2); margin-top: 8px; }
+#viewer .settings .settings-group-title:first-child { margin-top: 0; }
 #viewer label.opt { display: flex; align-items: center; gap: 8px; }
 #viewer input[type=text], #viewer select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid #2a2f3a; background: #1d2129; color: #e8eaed; width: 100%; }
 #viewer .sub { color: #9aa3b2; font-size: 13px; }

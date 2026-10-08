@@ -21,7 +21,7 @@ final class HubHttp {
         this.lanConnected = lanConnected;
     }
 
-    boolean isLan() { return lanConnected.getAsBoolean() && cfg.lanHubUrl != null && !cfg.lanHubUrl.isBlank(); }
+    boolean isLan() { return cfg.restricted || (lanConnected.getAsBoolean() && cfg.lanHubUrl != null && !cfg.lanHubUrl.isBlank()); }
     String base() { return AgentUpdater.httpBase(isLan() ? cfg.lanHubUrl : cfg.hubUrl); }
     HttpClient client() { return isLan() ? lan : cloud; }
 

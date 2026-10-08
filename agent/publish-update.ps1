@@ -23,6 +23,7 @@ $stage = Join-Path $env:TEMP ("agent-update-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force $stage | Out-Null
 try {
     Copy-Item $JarPath (Join-Path $stage "transacao-agent.jar")
+    Copy-Item $JarPath (Join-Path $stage "assistente.jar")
     if ($IncludeLibs) { Copy-Item "dist\lib" (Join-Path $stage "lib") -Recurse }
 
     $zip = Join-Path $env:TEMP ("agent-update-" + [guid]::NewGuid().ToString("N") + ".zip")

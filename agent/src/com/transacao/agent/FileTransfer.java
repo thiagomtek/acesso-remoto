@@ -21,11 +21,11 @@ final class FileTransfer {
             return;
         }
         try {
-            HttpRequest.Builder b = request(cfg, AgentUpdater.httpBase(cfg.hubUrl) + "/transfers/upload")
+            HttpRequest.Builder b = request(cfg, urlBase(cfg) + "/transfers/upload")
                     .header("x-transfer-session", sessionId)
                     .header("x-transfer-name", "arquivos-remotos.zip")
                     .POST(HttpRequest.BodyPublishers.ofByteArray(data));
-            int status = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build()
+            int status = httpClient(cfg)
                     .send(b.build(), HttpResponse.BodyHandlers.discarding()).statusCode();
             if (status != 201) throw new IOException("HTTP " + status);
             log.accept("Arquivo enviado ao operador.");
@@ -37,8 +37,8 @@ final class FileTransfer {
     static void downloadToReceipts(AgentConfig cfg, String transferId, String name, long expectedSize, Consumer<String> log,
                                   Consumer<Boolean> completion) {
         try {
-            HttpRequest request = request(cfg, AgentUpdater.httpBase(cfg.hubUrl) + "/transfers/" + transferId).GET().build();
-            HttpResponse<java.io.InputStream> r = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build()
+            HttpRequest request = request(cfg, urlBase(cfg) + "/transfers/" + transferId).GET().build();
+            HttpResponse<java.io.InputStream> r = httpClient(cfg)
                     .send(request, HttpResponse.BodyHandlers.ofInputStream());
             if (r.statusCode() != 200) throw new IOException("HTTP " + r.statusCode());
             File receipts = receiptsDirectory(System.getenv("USERPROFILE"), System.getProperty("user.home"));
@@ -64,8 +64,8 @@ final class FileTransfer {
         if (transferId == null || !transferId.matches("[a-fA-F0-9-]{36}") || expectedSize < 1 || expectedSize > maxBytes) {
             throw new IOException("metadados invalidos");
         }
-        HttpRequest request = request(cfg, AgentUpdater.httpBase(cfg.hubUrl) + "/transfers/" + transferId).GET().build();
-        HttpResponse<byte[]> r = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build()
+        HttpRequest request = request(cfg, urlBase(cfg) + "/transfers/" + transferId).GET().build();
+        HttpResponse<byte[]> r = httpClient(cfg)
                 .send(request, HttpResponse.BodyHandlers.ofByteArray());
         if (r.statusCode() != 200 || r.body().length != expectedSize || r.body().length > maxBytes) {
             throw new IOException("transferencia invalida");
@@ -73,10 +73,21 @@ final class FileTransfer {
         return r.body();
     }
 
+    private static HttpClient httpClient(AgentConfig cfg) {
+        return HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(20))
+                .proxy(cfg.restricted ? HubConnection.LAN_DIRECT_PROXY : java.net.ProxySelector.getDefault())
+                .build();
+    }
+
+    private static String urlBase(AgentConfig cfg) {
+        return AgentUpdater.httpBase(cfg.restricted && cfg.lanHubUrl != null && !cfg.lanHubUrl.isBlank() ? cfg.lanHubUrl : cfg.hubUrl);
+    }
+
     static HttpRequest.Builder request(AgentConfig cfg, String url) {
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofMinutes(15))
                 .header("x-client-id", cfg.clientId).header("authorization", "Bearer " + cfg.clientSecret);
-        if (!cfg.accessClientId.isEmpty()) b.header("CF-Access-Client-Id", cfg.accessClientId).header("CF-Access-Client-Secret", cfg.accessClientSecret);
+        if (!cfg.restricted && !cfg.accessClientId.isEmpty()) b.header("CF-Access-Client-Id", cfg.accessClientId).header("CF-Access-Client-Secret", cfg.accessClientSecret);
         return b;
     }
 

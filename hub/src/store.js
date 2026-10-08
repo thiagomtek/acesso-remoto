@@ -12,6 +12,10 @@ export const DEFAULT_SETTINGS = {
   startWithSystem: true,
   sharedFolderSync: true,
   quality: 'auto', // auto | max | balanced | economy
+  localOnly: false,
+  webrtcEnabled: true,
+  nativeKeyboardHelper: true,
+  autoUpdate: true,
 };
 
 const VALIDATORS = {
@@ -25,6 +29,10 @@ const VALIDATORS = {
   // Rejeita `false` inclusive de uma aba antiga que ainda esteja em cache.
   sharedFolderSync: (v) => v === true,
   quality: (v) => ['auto', 'max', 'balanced', 'economy'].includes(v),
+  localOnly: (v) => typeof v === 'boolean',
+  webrtcEnabled: (v) => typeof v === 'boolean',
+  nativeKeyboardHelper: (v) => typeof v === 'boolean',
+  autoUpdate: (v) => typeof v === 'boolean',
 };
 
 /** Mantem so chaves conhecidas com valores validos. */
@@ -67,6 +75,12 @@ export class Store {
       if (Object.hasOwn(c.settings || {}, 'serviceMode')) {
         delete c.settings.serviceMode;
         migrated = true;
+      }
+      for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
+        if (!Object.hasOwn(c.settings, k)) {
+          c.settings[k] = v;
+          migrated = true;
+        }
       }
     }
     if (migrated) this.#save();

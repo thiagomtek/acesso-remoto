@@ -11,24 +11,24 @@ public final class AutostartTest {
                 cmd.equals("\"C:\\Program Files\\Java\\bin\\javaw.exe\" -jar \"C:\\Users\\Ana Maria\\app\\transacao-agent.jar\" --background"));
         check("Windows: nenhum script envolvido (.vbs/.bat/wscript/cmd)", !cmd.contains(".vbs") && !cmd.contains(".bat") && !cmd.toLowerCase().contains("wscript") && !cmd.toLowerCase().contains("cmd /c"));
 
-        String out = "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\r\n    TransacaoClient    REG_SZ    " + cmd + "\r\n\r\n";
+        String out = "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\r\n    Assistente    REG_SZ    " + cmd + "\r\n\r\n";
         check("le o valor REG_SZ do 'reg query' (com espacos e aspas)", cmd.equals(Autostart.parseRegValue(out, null)));
         check("sem o valor: null (nao registrado)", Autostart.parseRegValue("ERRO: O sistema nao pode encontrar a chave ou valor especificado.", null) == null);
 
-        String reg = new String(Autostart.regFileContent("TransacaoClient", cmd), java.nio.charset.StandardCharsets.UTF_16LE);
+        String reg = new String(Autostart.regFileContent("Assistente", cmd), java.nio.charset.StandardCharsets.UTF_16LE);
         check(".reg: UTF-16 com BOM e cabecalho do registro", reg.charAt(0) == '\uFEFF' && reg.contains("Windows Registry Editor Version 5.00"));
         check(".reg: chave Run do usuario atual (HKCU)", reg.contains("[HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run]"));
-        check(".reg: barras dobradas e aspas escapadas", reg.contains("\"TransacaoClient\"=\"\\\"C:\\\\Program Files\\\\Java\\\\bin\\\\javaw.exe\\\" -jar"));
+        check(".reg: barras dobradas e aspas escapadas", reg.contains("\"Assistente\"=\"\\\"C:\\\\Program Files\\\\Java\\\\bin\\\\javaw.exe\\\" -jar"));
 
         String plist = Autostart.macPlist("/Library/Java/bin/java", "/Users/a&b/app/transacao-agent.jar");
         check("macOS: LaunchAgent com RunAtLoad e sem KeepAlive", plist.contains("<key>RunAtLoad</key><true/>") && plist.contains("<key>KeepAlive</key><false/>"));
         check("macOS: argumentos do java e escape de &", plist.contains("<string>-jar</string>") && plist.contains("a&amp;b") && plist.contains("--background"));
         String desktop = Autostart.linuxDesktop("/usr/bin/java", "/home/x/transacao-agent.jar");
-        check("Linux: .desktop de autostart", desktop.contains("Exec=\"/usr/bin/java\" -jar \"/home/x/transacao-agent.jar\" --background") && desktop.contains("Type=Application"));
+        check("Linux: .desktop de autostart", desktop.contains("Exec=\"/usr/bin/java\" -jar \"/home/x/transacao-agent.jar\" --background") && desktop.contains("Type=Application") && desktop.contains("Name=Assistente"));
 
         // ida e volta REAL na chave Run do usuario, com um nome proprio e descartavel (apagado no fim)
         if (System.getProperty("os.name", "").toLowerCase().contains("win")) {
-            String name = "TransacaoClientTeste" + System.nanoTime();
+            String name = "AssistenteTeste" + System.nanoTime();
             try {
                 StringBuilder log = new StringBuilder();
                 boolean ok = Autostart.ensureWindows(name, cmd, m -> log.append(m));

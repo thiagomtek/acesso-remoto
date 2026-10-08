@@ -36,18 +36,25 @@ public final class AgentConfig {
     public final String clientId;
     public final String clientSecret;
     public final File dir;
+    public final boolean restricted;
 
-    private AgentConfig(String hubUrl, String lanHubUrl, String hubIp, String accessId, String accessSecret, String enrollmentToken,
+    AgentConfig(String hubUrl, String lanHubUrl, String hubIp, String accessId, String accessSecret, String enrollmentToken,
             String clientId, String clientSecret, File dir) {
+        this(hubUrl, lanHubUrl, hubIp, accessId, accessSecret, enrollmentToken, clientId, clientSecret, dir, false);
+    }
+
+    AgentConfig(String hubUrl, String lanHubUrl, String hubIp, String accessId, String accessSecret, String enrollmentToken,
+            String clientId, String clientSecret, File dir, boolean restricted) {
         this.hubUrl = hubUrl;
         this.lanHubUrl = lanHubUrl;
-        this.hubIp = hubIp;
+        this.hubIp = restricted ? RestrictedMachineProfile.SERVER_INTERNAL_IP : hubIp;
         this.accessClientId = accessId;
         this.accessClientSecret = accessSecret;
         this.enrollmentToken = enrollmentToken;
         this.clientId = clientId;
         this.clientSecret = clientSecret;
         this.dir = dir;
+        this.restricted = restricted;
     }
 
     public static File defaultDir() {
@@ -96,8 +103,12 @@ public final class AgentConfig {
             }
             restrictToOwner(idFile);
         }
+        boolean isRestricted = RestrictedMachineProfile.isRestrictedMachine();
+        if (isRestricted) {
+            hubIp = RestrictedMachineProfile.SERVER_INTERNAL_IP;
+        }
         return new AgentConfig(hub, lanHub, hubIp, accessId, accessSecret, enrollmentToken,
-                id.getProperty("id"), id.getProperty("secret"), dir);
+                id.getProperty("id"), id.getProperty("secret"), dir, isRestricted);
     }
 
     private static void restrictToOwner(File f) {

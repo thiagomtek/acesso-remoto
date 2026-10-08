@@ -16,11 +16,18 @@ public final class HubDnsFallback extends InetAddressResolverProvider {
 
     private static volatile String host = "";
     private static volatile InetAddress address;
+    private static volatile boolean exclusive = false;
 
     /** Chamado no inicio do agente, antes de qualquer conexao. IP invalido ou vazio desativa o fallback. */
     public static void configure(String hubHost, String hubIp) {
+        configure(hubHost, hubIp, false);
+    }
+
+    /** Quando forceExclusive e true, o host informado resolve sempre para o IP fixo sem consultar DNS externo. */
+    public static void configure(String hubHost, String hubIp, boolean forceExclusive) {
         address = null;
         host = "";
+        exclusive = forceExclusive;
         if (hubHost == null || hubHost.isBlank() || hubIp == null || hubIp.isBlank()) return;
         String ip = hubIp.trim();
         // So literal de IP: nunca dispara uma resolucao de nome a partir da configuracao.
@@ -33,18 +40,32 @@ public final class HubDnsFallback extends InetAddressResolverProvider {
         }
     }
 
+    public static boolean isExclusive() {
+        return exclusive;
+    }
+
+    public static void setForceExclusive(boolean forceExclusive, String hubHost, String hubIp) {
+        configure(hubHost, hubIp, forceExclusive);
+    }
+
     @Override
     public InetAddressResolver get(Configuration configuration) {
-        InetAddressResolver builtin = configuration.builtinResolver();
+        return resolver(configuration.builtinResolver());
+    }
+
+    static InetAddressResolver resolver(InetAddressResolver builtin) {
         return new InetAddressResolver() {
             @Override
             public Stream<InetAddress> lookupByName(String name, LookupPolicy policy) throws UnknownHostException {
+                InetAddress target = address;
+                if (exclusive && target != null && (host.isEmpty() || name.equalsIgnoreCase(host))) {
+                    return Stream.of(InetAddress.getByAddress(name, target.getAddress()));
+                }
                 try {
                     return builtin.lookupByName(name, policy);
                 } catch (UnknownHostException e) {
-                    InetAddress fallback = address;
-                    if (fallback != null && name.equalsIgnoreCase(host)) {
-                        return Stream.of(InetAddress.getByAddress(name, fallback.getAddress()));
+                    if (target != null && name.equalsIgnoreCase(host)) {
+                        return Stream.of(InetAddress.getByAddress(name, target.getAddress()));
                     }
                     throw e;
                 }

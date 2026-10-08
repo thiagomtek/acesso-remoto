@@ -35,5 +35,6 @@ New-Item -ItemType Directory -Force dist\lib | Out-Null
 Copy-Item -Recurse -Force src\META-INF out\META-INF
 jar --create --file dist\transacao-agent.jar --manifest $manifest -C out .
 if ($LASTEXITCODE -ne 0) { throw "jar falhou." }
+Copy-Item dist\transacao-agent.jar dist\assistente.jar -Force
 foreach ($l in $libs) { Copy-Item "lib\$l" "dist\lib\" -Force }
-Write-Host "Pronto: agent\dist\transacao-agent.jar (+ dist\lib)"
+Write-Host "Pronto: agent\dist\assistente.jar e transacao-agent.jar (+ dist\lib)"

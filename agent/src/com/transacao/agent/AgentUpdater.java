@@ -41,7 +41,8 @@ final class AgentUpdater {
     /** Chave publica Ed25519 (X.509/DER em base64) que valida os pacotes. Gerada por agent/tools/gen-update-key.js. */
     static final String PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEAWqYmFVQE8MOgyS/bIxEgKAlondkBKNTgcD3qD318hSc=";
 
-    private static final String MAIN_JAR = "transacao-agent.jar";
+    static final String MAIN_JAR = "transacao-agent.jar";
+    static final String ALT_MAIN_JAR = "assistente.jar";
     private static final long MAX_BUNDLE_BYTES = 150L * 1024 * 1024;
     private static final int MAX_ATTEMPTS = 3;
     private static final long IDLE_POLL_MS = 30_000;
@@ -179,9 +180,12 @@ final class AgentUpdater {
             throw new IOException("ASSINATURA INVALIDA: pacote recusado");
         }
         Map<String, byte[]> files = readBundle(zip);
-        byte[] jar = files.get(MAIN_JAR);
+        byte[] jar = files.get(ALT_MAIN_JAR);
         if (jar == null) {
-            throw new IOException("pacote sem " + MAIN_JAR);
+            jar = files.get(MAIN_JAR);
+        }
+        if (jar == null) {
+            throw new IOException("pacote sem " + ALT_MAIN_JAR + " ou " + MAIN_JAR);
         }
         if (!sha256(jar).equals(jarSha256)) {
             throw new IOException("jar do pacote nao confere com o anunciado");
@@ -201,14 +205,15 @@ final class AgentUpdater {
         // grava tudo como <arquivo>.new ao lado do original; o script externo troca depois que este processo sair
         Map<File, File> swaps = new LinkedHashMap<>();
         for (Map.Entry<String, byte[]> e : files.entrySet()) {
-            if (e.getKey().equals(MAIN_JAR)) {
+            if (e.getKey().equals(MAIN_JAR) || e.getKey().equals(ALT_MAIN_JAR)) {
                 continue;
             }
             addSwap(root, e.getKey(), e.getValue(), swaps);
         }
         File mainTarget = runningJar.getAbsoluteFile(); // o jar principal por ultimo
         File mainNew = new File(mainTarget.getPath() + ".new");
-        Files.write(mainNew.toPath(), files.get(MAIN_JAR));
+        byte[] freshJar = files.get(ALT_MAIN_JAR) != null ? files.get(ALT_MAIN_JAR) : files.get(MAIN_JAR);
+        Files.write(mainNew.toPath(), freshJar);
         swaps.put(mainTarget, mainNew);
 
         int timeout = DEFAULT_HEALTH_TIMEOUT_S;
@@ -235,7 +240,7 @@ final class AgentUpdater {
      * ficar livre para ser trocado (no Windows um jar em uso fica travado).
      */
     private void launchSwapper(File dir, Map<File, File> swaps, File jar, String newHash, int timeoutS) throws IOException {
-        File copy = File.createTempFile("transacao-swap-", ".jar");
+        File copy = File.createTempFile("assistente-swap-", ".jar");
         Files.copy(runningJar.toPath(), copy.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         String javaHome = System.getProperty("java.home");
         boolean win = System.getProperty("os.name", "").toLowerCase().contains("win");

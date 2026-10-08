@@ -44,7 +44,11 @@ if not defined JAVAW (
     pause
     exit /b 1
 )
-start "" "%JAVAW%" -jar transacao-agent.jar
+if exist "%~dp0assistente.jar" (
+    start "" "%JAVAW%" -jar "%~dp0assistente.jar"
+) else (
+    start "" "%JAVAW%" -jar "%~dp0transacao-agent.jar"
+)
 '@
 $batConsole = @'
 @echo off
@@ -55,7 +59,11 @@ if not defined JAVA (
     pause
     exit /b 1
 )
-"%JAVA%" -jar transacao-agent.jar
+if exist "%~dp0assistente.jar" (
+    "%JAVA%" -jar "%~dp0assistente.jar"
+) else (
+    "%JAVA%" -jar "%~dp0transacao-agent.jar"
+)
 pause
 '@
 $command = @'
@@ -65,17 +73,28 @@ cd "$DIR"
 if command -v java >/dev/null 2>&1; then JAVA_CMD="java"; else
     echo "Java nao encontrado. Instale o Java (JRE 17+)."; read -p "Pressione Enter para sair..."; exit 1
 fi
-"$JAVA_CMD" -jar "$DIR/transacao-agent.jar"
+if [ -f "$DIR/assistente.jar" ]; then
+    "$JAVA_CMD" -jar "$DIR/assistente.jar"
+else
+    "$JAVA_CMD" -jar "$DIR/transacao-agent.jar"
+fi
 '@
 function Write-Ascii($name, $content) { [System.IO.File]::WriteAllText((Join-Path $here "dist\$name"), $content.Replace("`r`n","`n").Replace("`n","`r`n"), [System.Text.Encoding]::ASCII) }
 Write-Ascii "resolve-java.ps1" $resolveJava
+Write-Ascii "iniciar-assistente.bat" $bat
+Write-Ascii "iniciar-assistente-console.bat" $batConsole
 Write-Ascii "iniciar-agent.bat" $bat
 Write-Ascii "iniciar-agent-console.bat" $batConsole
+[System.IO.File]::WriteAllText((Join-Path $here "dist\iniciar-assistente.command"), $command.Replace("`r`n","`n"), [System.Text.Encoding]::ASCII)
 [System.IO.File]::WriteAllText((Join-Path $here "dist\iniciar-agent.command"), $command.Replace("`r`n","`n"), [System.Text.Encoding]::ASCII)
 
 # ---- zip ----
-$zip = Join-Path $here "transacao-agent-instalador.zip"
-if (Test-Path $zip) { Remove-Item $zip -Force }
-Compress-Archive -Path "dist\*" -DestinationPath $zip
-$mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
-Write-Host "Pacote pronto: $zip ($mb MB)"
+$zipAssistente = Join-Path $here "assistente-instalador.zip"
+if (Test-Path $zipAssistente) { Remove-Item $zipAssistente -Force }
+Compress-Archive -Path "dist\*" -DestinationPath $zipAssistente
+$mb = [math]::Round((Get-Item $zipAssistente).Length / 1MB, 1)
+Write-Host "Pacote pronto: $zipAssistente ($mb MB)"
+
+$zipLegacy = Join-Path $here "transacao-agent-instalador.zip"
+Copy-Item $zipAssistente $zipLegacy -Force
+Write-Host "Pacote legado sincronizado: $zipLegacy"

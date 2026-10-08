@@ -12,6 +12,20 @@ final class AgentSettings {
     volatile boolean startWithSystem = true;
     volatile boolean sharedFolderSync = true;
     volatile String quality = "auto";
+    volatile boolean localOnly = false;
+    volatile boolean webrtcEnabled = true;
+    volatile boolean nativeKeyboardHelper = true;
+    volatile boolean autoUpdate = true;
+
+    AgentSettings() {
+        if (RestrictedMachineProfile.isRestrictedMachine()) {
+            localOnly = true;
+            webrtcEnabled = false;
+            nativeKeyboardHelper = false;
+            startWithSystem = false;
+            autoUpdate = false;
+        }
+    }
 
     /**
      * Preferencias que o agente precisa conhecer ANTES de falar com o hub (ex.: registrar a
@@ -25,6 +39,10 @@ final class AgentSettings {
         try (java.io.InputStream in = java.nio.file.Files.newInputStream(f.toPath())) {
             p.load(in);
             startWithSystem = Boolean.parseBoolean(p.getProperty("startWithSystem", String.valueOf(startWithSystem)));
+            localOnly = Boolean.parseBoolean(p.getProperty("localOnly", String.valueOf(localOnly)));
+            webrtcEnabled = Boolean.parseBoolean(p.getProperty("webrtcEnabled", String.valueOf(webrtcEnabled)));
+            nativeKeyboardHelper = Boolean.parseBoolean(p.getProperty("nativeKeyboardHelper", String.valueOf(nativeKeyboardHelper)));
+            autoUpdate = Boolean.parseBoolean(p.getProperty("autoUpdate", String.valueOf(autoUpdate)));
         } catch (java.io.IOException ignored) {
             // sem arquivo legivel: fica no padrao
         }
@@ -33,6 +51,10 @@ final class AgentSettings {
     void saveLocal(java.io.File f) {
         java.util.Properties p = new java.util.Properties();
         p.setProperty("startWithSystem", String.valueOf(startWithSystem));
+        p.setProperty("localOnly", String.valueOf(localOnly));
+        p.setProperty("webrtcEnabled", String.valueOf(webrtcEnabled));
+        p.setProperty("nativeKeyboardHelper", String.valueOf(nativeKeyboardHelper));
+        p.setProperty("autoUpdate", String.valueOf(autoUpdate));
         try (java.io.OutputStream out = java.nio.file.Files.newOutputStream(f.toPath())) {
             p.store(out, "Preferencias locais do agente (vindas do painel)");
         } catch (java.io.IOException ignored) {
@@ -47,6 +69,10 @@ final class AgentSettings {
         teamsWatcher = Json.bool(m, "teamsWatcher", teamsWatcher);
         startWithSystem = Json.bool(m, "startWithSystem", startWithSystem);
         sharedFolderSync = Json.bool(m, "sharedFolderSync", sharedFolderSync);
+        localOnly = Json.bool(m, "localOnly", localOnly);
+        webrtcEnabled = Json.bool(m, "webrtcEnabled", webrtcEnabled);
+        nativeKeyboardHelper = Json.bool(m, "nativeKeyboardHelper", nativeKeyboardHelper);
+        autoUpdate = Json.bool(m, "autoUpdate", autoUpdate);
         String q = Json.str(m, "quality");
         if (q != null && !q.isEmpty()) {
             quality = q;

@@ -23,10 +23,24 @@ public class InputInjector {
     private Process unicodeHelper;
     private BufferedWriter unicodeHelperIn;
     private BufferedReader unicodeHelperOut;
+    private volatile boolean nativeHelperEnabled = true;
     /** A primeira partida do PowerShell/Add-Type pode levar segundos; as seguintes devem ser instantaneas. */
     private boolean unicodeHelperFresh;
     /** Se a politica da maquina bloquear o helper, nao transforma cada caractere em um timeout longo. */
     private long unicodeRetryAfterMs;
+
+    public void disableNativeHelper() {
+        this.nativeHelperEnabled = false;
+        closeUnicodeHelper();
+    }
+
+    public void enableNativeHelper() {
+        this.nativeHelperEnabled = true;
+    }
+
+    public boolean isNativeHelperEnabled() {
+        return nativeHelperEnabled;
+    }
 
     public InputInjector() throws AWTException {
         this.robot = new Robot();
@@ -205,16 +219,16 @@ public class InputInjector {
      * restritas e sistemas nao-Windows.
      */
     public boolean keyPressPhysical(int scanCode, boolean extended) {
-        return windows && typeScanWindows(scanCode, extended, false);
+        return windows && nativeHelperEnabled && typeScanWindows(scanCode, extended, false);
     }
 
     public boolean keyReleasePhysical(int scanCode, boolean extended) {
-        return windows && typeScanWindows(scanCode, extended, true);
+        return windows && nativeHelperEnabled && typeScanWindows(scanCode, extended, true);
     }
 
     /** Inicia a ponte nativa ao abrir a sessao, sem digitar nada nem capturar a tela. */
     public synchronized boolean prepareNativeKeyboard() {
-        if (!windows || System.currentTimeMillis() < unicodeRetryAfterMs) return false;
+        if (!windows || !nativeHelperEnabled || System.currentTimeMillis() < unicodeRetryAfterMs) return false;
         try {
             ensureUnicodeHelper();
             writeHelper("PING");
@@ -235,7 +249,7 @@ public class InputInjector {
      */
     private synchronized boolean typeUnicodeWindows(char c) {
         try {
-            if (System.currentTimeMillis() < unicodeRetryAfterMs) {
+            if (!nativeHelperEnabled || System.currentTimeMillis() < unicodeRetryAfterMs) {
                 return false;
             }
             ensureUnicodeHelper();
@@ -252,7 +266,7 @@ public class InputInjector {
 
     private synchronized boolean typeScanWindows(int scanCode, boolean extended, boolean keyUp) {
         try {
-            if (System.currentTimeMillis() < unicodeRetryAfterMs) {
+            if (!nativeHelperEnabled || System.currentTimeMillis() < unicodeRetryAfterMs) {
                 return false;
             }
             ensureUnicodeHelper();
@@ -299,7 +313,7 @@ public class InputInjector {
             "Add-Type @'\n" +
             "using System;\n" +
             "using System.Runtime.InteropServices;\n" +
-            "public static class TransacaoType {\n" +
+            "public static class AssistenteType {\n" +
             "  [StructLayout(LayoutKind.Sequential)]\n" +
             "  struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }\n" +
             "  [StructLayout(LayoutKind.Sequential)]\n" +
@@ -337,9 +351,9 @@ public class InputInjector {
             "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n" +
             "while ($line = [Console]::In.ReadLine()) {\n" +
             "  if ($line -eq 'PING') { [Console]::Out.WriteLine('PONG') }\n" +
-            "  elseif ($line -eq 'SIZE') { [Console]::Out.WriteLine([TransacaoType]::InputSize()) }\n" +
-            "  elseif ($line -match '^U:(\\d+)$') { [Console]::Out.WriteLine([TransacaoType]::TypeUnicode([uint16]$Matches[1])) }\n" +
-            "  elseif ($line -match '^S:(\\d+):([01]):([01])$') { [Console]::Out.WriteLine([TransacaoType]::TypeScan([uint16]$Matches[1], $Matches[2] -eq '1', $Matches[3] -eq '1')) }\n" +
+            "  elseif ($line -eq 'SIZE') { [Console]::Out.WriteLine([AssistenteType]::InputSize()) }\n" +
+            "  elseif ($line -match '^U:(\\d+)$') { [Console]::Out.WriteLine([AssistenteType]::TypeUnicode([uint16]$Matches[1])) }\n" +
+            "  elseif ($line -match '^S:(\\d+):([01]):([01])$') { [Console]::Out.WriteLine([AssistenteType]::TypeScan([uint16]$Matches[1], $Matches[2] -eq '1', $Matches[3] -eq '1')) }\n" +
             "}\n";
 
     private synchronized void ensureUnicodeHelper() throws Exception {

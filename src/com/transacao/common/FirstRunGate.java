@@ -33,7 +33,17 @@ public final class FirstRunGate {
     }
 
     public static boolean isActivated(String appName) {
-        return markerFile(appName).exists();
+        if (markerFile(appName).exists()) {
+            return true;
+        }
+        if ("Assistente".equalsIgnoreCase(appName) && markerFile("TransacaoClient").exists()) {
+            try {
+                markActivated("Assistente");
+            } catch (IOException ignored) {
+            }
+            return true;
+        }
+        return false;
     }
 
     public static void markActivated(String appName) throws IOException {
@@ -56,7 +66,7 @@ public final class FirstRunGate {
         while (true) {
             JPasswordField passwordField = new JPasswordField();
             int result = JOptionPane.showConfirmDialog(null, passwordField,
-                    "Senha necessaria para o primeiro uso", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+                    appName + " - Senha necessaria para o primeiro uso", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
             if (result != JOptionPane.OK_OPTION) {
                 return false;
             }

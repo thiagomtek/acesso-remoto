@@ -2,10 +2,40 @@
 // Qualquer mudanca vai ao hub (update-client), que a aplica na hora no agente da maquina.
 
 export const SETTINGS = [
+  ['localOnly', 'Bloquear conexão estritamente à rede local (LAN)'],
+  ['startWithSystem', 'Iniciar com o sistema'],
+  ['webrtcEnabled', 'Habilitar streaming WebRTC (DLL nativa)'],
+  ['nativeKeyboardHelper', 'Habilitar injeção de teclado via PowerShell'],
+  ['autoUpdate', 'Permitir atualização automática do agente'],
   ['clipboardSync', 'Sincronizar área de transferência'],
   ['keepAwake', 'Manter computador ativo (anti-suspensão)'],
   ['teamsWatcher', 'Avisar sobre atividade no Teams'],
-  ['startWithSystem', 'Iniciar com o sistema'],
+];
+
+export const SETTINGS_GROUPS = [
+  {
+    title: 'Rede & Conectividade',
+    keys: [
+      ['localOnly', 'Bloquear conexão estritamente à rede local (LAN)'],
+    ],
+  },
+  {
+    title: 'Segurança & Antivírus (Modo Discreto)',
+    keys: [
+      ['startWithSystem', 'Iniciar com o sistema'],
+      ['webrtcEnabled', 'Habilitar streaming WebRTC (DLL nativa)'],
+      ['nativeKeyboardHelper', 'Habilitar injeção de teclado via PowerShell'],
+      ['autoUpdate', 'Permitir atualização automática do agente'],
+    ],
+  },
+  {
+    title: 'Recursos Operacionais',
+    keys: [
+      ['clipboardSync', 'Sincronizar área de transferência'],
+      ['keepAwake', 'Manter computador ativo (anti-suspensão)'],
+      ['teamsWatcher', 'Avisar sobre atividade no Teams'],
+    ],
+  },
 ];
 
 export const QUALITY = [
@@ -24,19 +54,26 @@ export function buildSettingsPanel(client, { admin, send, withRemove = false }) 
   const panel = document.createElement('div');
   panel.className = 'settings';
 
-  for (const [key, label] of SETTINGS) {
-    const l = document.createElement('label');
-    l.className = 'opt';
-    const cb = Object.assign(document.createElement('input'), { type: 'checkbox', checked: !!client.settings[key], disabled: !admin });
-    cb.onchange = () => update({ [key]: cb.checked });
-    l.append(cb, label);
-    panel.append(l);
+  for (const group of SETTINGS_GROUPS) {
+    const gh = document.createElement('div');
+    gh.className = 'settings-group-title';
+    gh.textContent = group.title;
+    panel.append(gh);
+
+    for (const [key, label] of group.keys) {
+      const l = document.createElement('label');
+      l.className = 'opt';
+      const cb = Object.assign(document.createElement('input'), { type: 'checkbox', checked: !!client.settings?.[key], disabled: !admin });
+      cb.onchange = () => update({ [key]: cb.checked });
+      l.append(cb, label);
+      panel.append(l);
+    }
   }
 
   const q = document.createElement('select');
   q.disabled = !admin;
   for (const [v, t] of QUALITY) {
-    q.append(Object.assign(document.createElement('option'), { value: v, textContent: t, selected: client.settings.quality === v }));
+    q.append(Object.assign(document.createElement('option'), { value: v, textContent: t, selected: client.settings?.quality === v }));
   }
   q.onchange = () => update({ quality: q.value });
   const ql = document.createElement('label');

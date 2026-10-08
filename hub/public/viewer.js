@@ -1053,8 +1053,16 @@ export class Viewer {
       this.prevRx = { bytes: this.rxBytes, frames: this.rxFrames, t: now };
       this.probeCompatLatency();
       const ping = this.compatPingMs == null ? 'medindo…' : `${Math.round(this.compatPingMs)} ms`;
-      const jitter = this.compatJitterMs == null ? 'medindo…' : `${Math.round(this.compatJitterMs)} ms`;
-      this.statsEl.textContent = `modo compatível · ${this.hubRouteLabel()} · ${this.canvas.width}×${this.canvas.height} · ${kbs.toFixed(0)} KB/s · ${fps.toFixed(0)} quadros/s · ping ${ping} · jitter ${jitter}`;
+      const lines = [
+        'modo compatível',
+        this.hubRouteLabel(),
+        `${this.canvas.width}×${this.canvas.height}`,
+        `${kbs.toFixed(0)} KB/s`,
+        `${fps.toFixed(0)} quadros/s`,
+        `ping ${ping}`,
+        `jitter ${jitter}`,
+      ];
+      this.statsEl.textContent = lines.join('\n');
     }, 1000);
     this.reportViewport();
   }
@@ -1310,13 +1318,19 @@ export class Viewer {
     const ping = ms(pair?.currentRoundTripTime);
     // `jitter` e a variacao de chegada dos pacotes de video, medida pelo receptor WebRTC.
     const jitter = ms(inbound.jitter);
-    const lost = inbound.packetsLost ? ` · perda ${inbound.packetsLost}` : '';
-    this.statsEl.textContent = [
+    const lost = inbound.packetsLost ? `perda ${inbound.packetsLost}` : null;
+    const lines = [
       this.hubRouteLabel(),
+      codec,
       `${inbound.frameWidth || '?'}×${inbound.frameHeight || '?'}`,
-      `${Math.round(inbound.framesPerSecond || 0)} fps`, `${mbps.toFixed(1)} Mbps`, codec,
-      `ping ${ping}`, `jitter ${jitter}`, path,
-    ].filter(Boolean).join(' · ') + lost;
+      `${Math.round(inbound.framesPerSecond || 0)} fps`,
+      `${mbps.toFixed(1)} Mbps`,
+      `ping ${ping}`,
+      `jitter ${jitter}`,
+      path,
+      lost,
+    ].filter(Boolean);
+    this.statsEl.textContent = lines.join('\n');
   }
 
   close(notify) {

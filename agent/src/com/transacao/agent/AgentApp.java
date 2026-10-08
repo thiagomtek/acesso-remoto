@@ -49,8 +49,8 @@ import java.util.UUID;
  */
 public final class AgentApp {
 
-    /** Mesmo nome do client antigo: a senha da 1a execucao ja dada continua valendo e o atalho de inicio e substituido. */
-    static final String APP_NAME = "TransacaoClient";
+    /** Assinatura do software como Assistente. */
+    static final String APP_NAME = "Assistente";
     private static final String VERSION = "agent";
 
     private final AgentConfig cfg;
@@ -124,7 +124,7 @@ public final class AgentApp {
         }
         File jarDir = jarDir();
         AgentConfig cfg = AgentConfig.load(AgentConfig.defaultDir(), jarDir);
-        HubDnsFallback.configure(java.net.URI.create(cfg.hubUrl).getHost(), cfg.hubIp);
+        HubDnsFallback.configure(java.net.URI.create(cfg.hubUrl).getHost(), cfg.hubIp, cfg.restricted);
         FileLock lock = singleInstanceLock(cfg.dir);
         if (lock == null) {
             return; // ja ha um agente rodando neste usuario
@@ -172,13 +172,18 @@ public final class AgentApp {
         } catch (Exception e) {
             log("Nao foi possivel identificar a versao do agente: " + e.getMessage());
         }
-        log("Agente iniciando. Hub: " + cfg.hubUrl + " | id " + cfg.clientId + " | versao " + (jarHash.isEmpty() ? "dev" : jarHash.substring(0, 8)));
+        log("Assistente iniciando. Hub: " + cfg.hubUrl + " | id " + cfg.clientId + " | versao " + (jarHash.isEmpty() ? "dev" : jarHash.substring(0, 8)));
         // Inicializacao automatica SO para o usuario atual (HKCU Run / LaunchAgent / autostart), sem scripts:
         // registrada em toda partida - inclusive logo apos uma atualizacao - de acordo com a preferencia local.
         settings.loadLocal(new File(cfg.dir, "local-settings.properties"));
+        boolean localOnly = settings.localOnly || cfg.restricted;
+        HubDnsFallback.configure(java.net.URI.create(cfg.hubUrl).getHost(), cfg.hubIp, localOnly);
+
+        applyKeyboardHelperSettings();
+
         // Migracao unica: o modo servico/driver virtual foi removido do produto. Se esta maquina
         // ainda tiver os artefatos de uma ativacao antiga, desfaz tudo com UAC e volta ao modo normal.
-        if (LegacyServiceModeCleanup.isPresent()) {
+        if (!localOnly && LegacyServiceModeCleanup.isPresent()) {
             log("Detectados componentes legados do modo servico; iniciando reversao para o modo normal.");
             LegacyServiceModeCleanup.applyAsync(this::log);
         }
@@ -188,8 +193,11 @@ public final class AgentApp {
         } else {
             Autostart.remove(this::log);
         }
-        // Onde o Windows vai bloquear a DLL do WebRTC, nem tenta (evita o aviso do Windows a cada reinicio)
-        if (WebrtcGuard.smartAppControlEnforced()) {
+        // WebRTC
+        if (!settings.webrtcEnabled) {
+            webrtcUsable = false;
+            log("WebRTC desativado nas configuracoes da maquina; operando em modo compativel.");
+        } else if (WebrtcGuard.smartAppControlEnforced()) {
             webrtcUsable = false;
             log("Smart App Control ativo: usando o modo compativel (sem carregar o WebRTC).");
         } else if (WebrtcGuard.blockedBefore(cfg.dir, jarHash)) {
@@ -223,7 +231,7 @@ public final class AgentApp {
                 setStatus("Reconectando...");
                 closeAllSessions();
             }
-        }, this::log);
+        }, this::log, () -> settings.localOnly || cfg.restricted);
         hub.start();
         Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown));
     }
@@ -258,6 +266,10 @@ public final class AgentApp {
                 }
                 break;
             case "update": // o hub tem uma versao diferente: baixa, confere assinatura e troca quando ocioso
+                if (!settings.autoUpdate) {
+                    log("Atualizacao automatica recusada: desabilitada nas configuracoes da maquina.");
+                    break;
+                }
                 updater.onOffer(Json.str(m, "jarSha256"), Json.str(m, "zipSha256"), (long) Json.num(m, "size", 0));
                 break;
             case "update-status":
@@ -369,11 +381,11 @@ public final class AgentApp {
         // A bandeja e um identificador discreto do agente; nao revela para quem olhar a barra de
         // tarefas que existe uma sessao remota ativa. O estado operacional continua centralizado
         // no painel autenticado e nos logs tecnicos.
-        if (settings.allowRemoteControl) worker.execute(() -> {
+        if (settings.allowRemoteControl && settings.nativeKeyboardHelper) worker.execute(() -> {
             try { injector().prepareNativeKeyboard(); } catch (Exception ignored) { /* fallback do injetor */ }
         });
-        if (!webrtcUsable) {
-            fallbackToCompat(s, "o WebRTC esta indisponivel nesta maquina");
+        if (!webrtcUsable || !settings.webrtcEnabled) {
+            fallbackToCompat(s, !settings.webrtcEnabled ? "o WebRTC esta desativado nas configuracoes da maquina" : "o WebRTC esta indisponivel nesta maquina");
             return;
         }
         try {
@@ -486,8 +498,23 @@ public final class AgentApp {
         synchronized (injectorLock) {
             if (injector == null) {
                 injector = new InputInjector();
+                if (!settings.nativeKeyboardHelper) {
+                    injector.disableNativeHelper();
+                }
             }
             return injector;
+        }
+    }
+
+    private void applyKeyboardHelperSettings() {
+        synchronized (injectorLock) {
+            if (injector != null) {
+                if (!settings.nativeKeyboardHelper) {
+                    injector.disableNativeHelper();
+                } else {
+                    injector.enableNativeHelper();
+                }
+            }
         }
     }
 
@@ -701,6 +728,20 @@ public final class AgentApp {
     }
 
     private void applySettingsLocked() {
+        // Rede local exclusiva vs normal
+        boolean localOnly = settings.localOnly || cfg.restricted;
+        HubDnsFallback.setForceExclusive(localOnly, java.net.URI.create(cfg.hubUrl).getHost(), cfg.hubIp);
+        if (localOnly && hub != null && hub.isConnected() && !hub.isLanConnected()) {
+            hub.reconnectNow("Restricao exclusiva de rede local ativada pelo painel");
+        }
+        // Injetor nativo
+        applyKeyboardHelperSettings();
+        // WebRTC
+        if (!settings.webrtcEnabled) {
+            webrtcUsable = false;
+        } else if (!WebrtcGuard.smartAppControlEnforced() && !WebrtcGuard.blockedBefore(cfg.dir, jarHash)) {
+            webrtcUsable = true;
+        }
         // Anti-suspensao
         if (settings.keepAwake && keepAlive == null) {
             keepAlive = new ScreenKeepAlive(this::log);
@@ -755,7 +796,7 @@ public final class AgentApp {
         }
         try {
             PopupMenu popup = new PopupMenu();
-            MenuItem info = new MenuItem("Transacao - Client");
+            MenuItem info = new MenuItem("Assistente");
             info.setEnabled(false);
             MenuItem update = new MenuItem("Atualizar");
             update.addActionListener(e -> requestManualUpdate());
@@ -768,7 +809,7 @@ public final class AgentApp {
             popup.addSeparator();
             popup.add(update);
             popup.add(exit);
-            tray = new TrayIcon(trayImage(), "Transacao - Client", popup);
+            tray = new TrayIcon(trayImage(), "Assistente", popup);
             tray.setImageAutoSize(true);
             SystemTray.getSystemTray().add(tray);
         } catch (Exception e) {
@@ -779,7 +820,7 @@ public final class AgentApp {
     private void setStatus(String s) {
         status = s;
         if (tray != null) {
-            tray.setToolTip("Transacao - Client: " + s);
+            tray.setToolTip("Assistente: " + s);
         }
     }
 

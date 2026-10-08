@@ -90,12 +90,18 @@ public final class HubConnection {
     private volatile long lastRx;
     private volatile boolean connected;
     private volatile String connectedUrl = "";
+    private final java.util.function.BooleanSupplier isLocalOnly;
 
     public HubConnection(AgentConfig cfg, String hostname, Listener listener, Consumer<String> log) {
+        this(cfg, hostname, listener, log, () -> cfg.restricted);
+    }
+
+    public HubConnection(AgentConfig cfg, String hostname, Listener listener, Consumer<String> log, java.util.function.BooleanSupplier isLocalOnly) {
         this.cfg = cfg;
         this.hostname = hostname;
         this.listener = listener;
         this.log = log;
+        this.isLocalOnly = isLocalOnly != null ? isLocalOnly : () -> cfg.restricted;
     }
 
     public boolean isConnected() {
@@ -104,7 +110,7 @@ public final class HubConnection {
 
     /** Rota atual, apenas para telemetria tecnica; nunca contem segredo. */
     public boolean isLanConnected() {
-        return connectedUrl.equals(cfg.lanHubUrl);
+        return cfg.restricted || isLocalOnly.getAsBoolean() || connectedUrl.equals(cfg.lanHubUrl);
     }
 
     public void start() {
@@ -204,6 +210,13 @@ public final class HubConnection {
     }
 
     private String selectEndpoint() throws Exception {
+        boolean localOnly = cfg.restricted || isLocalOnly.getAsBoolean();
+        if (localOnly) {
+            // Conexao exclusivamente para a rede local (sem fallback para rotas de nuvem/Cloudflare).
+            String endpoint = (cfg.lanHubUrl != null && !cfg.lanHubUrl.isBlank()) ? cfg.lanHubUrl : cfg.hubUrl;
+            session(endpoint);
+            return endpoint;
+        }
         // LAN primeiro. Se a VPN corporativa bloquear a sub-rede ou o DNS interno, a tentativa curta
         // falha e o mesmo ciclo segue para Cloudflare sem deixar o agente offline.
         LinkedHashSet<String> endpoints = new LinkedHashSet<>();
@@ -227,9 +240,10 @@ public final class HubConnection {
     }
 
     private void session(String endpoint) throws Exception {
-        boolean lan = endpoint.equals(cfg.lanHubUrl);
+        boolean localOnly = cfg.restricted || isLocalOnly.getAsBoolean();
+        boolean lan = localOnly || endpoint.equals(cfg.lanHubUrl);
         WebSocket.Builder b = (lan ? lanHttp : cloudHttp).newWebSocketBuilder()
-                .connectTimeout(Duration.ofSeconds(endpoint.equals(cfg.lanHubUrl) ? 2 : 15))
+                .connectTimeout(Duration.ofSeconds(lan ? 2 : 15))
                 .header("x-client-id", cfg.clientId)
                 .header("authorization", "Bearer " + cfg.clientSecret)
                 .header("x-client-name", URLEncoder.encode(hostname, StandardCharsets.UTF_8).replace("+", "%20"));
@@ -300,12 +314,14 @@ public final class HubConnection {
         // mascarava a rota: o log podia dizer LAN, mas o socket continuava atravessando
         // Cloudflare. A tentativa LAN precisa de fato discar o hostname interno; se falhar,
         // selectEndpoint() tenta a rota de nuvem no mesmo ciclo.
-        }).get(endpoint.equals(cfg.lanHubUrl) ? 4 : 30, TimeUnit.SECONDS);
+        }).get((cfg.restricted || endpoint.equals(cfg.lanHubUrl)) ? 4 : 30, TimeUnit.SECONDS);
 
         ws = socket;
         connected = true;
         connectedUrl = endpoint;
-        log.accept(endpoint.equals(cfg.lanHubUrl) ? "Conectado ao hub pela rede local." : "Conectado ao hub pela nuvem.");
+        log.accept(cfg.restricted
+                ? "Conectado ao hub pelo IP interno (192.168.16.253)."
+                : (endpoint.equals(cfg.lanHubUrl) ? "Conectado ao hub pela rede local." : "Conectado ao hub pela nuvem."));
         listener.onOpen();
         done.get();
         connected = false;

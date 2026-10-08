@@ -22,9 +22,10 @@ import java.util.regex.Pattern;
  */
 final class Autostart {
 
-    static final String VALUE_NAME = "TransacaoClient";
+    static final String VALUE_NAME = "Assistente";
+    static final String LEGACY_VALUE_NAME = "TransacaoClient";
     private static final String RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-    private static final String MAC_LABEL = "br.com.tththiago.transacao-agent";
+    private static final String MAC_LABEL = "br.com.tththiago.assistente";
     private static final Pattern REG_SZ = Pattern.compile("REG_SZ\\s+(.*?)\\s*$", Pattern.MULTILINE);
 
     private Autostart() {
@@ -53,10 +54,12 @@ final class Autostart {
             }
             String java = new File(javaHome, "bin/java").getAbsolutePath();
             if (os.contains("mac")) {
+                Files.deleteIfExists(new File(System.getProperty("user.home"), "Library/LaunchAgents/br.com.tththiago.transacao-agent.plist").toPath());
                 return writeIfDifferent(new File(System.getProperty("user.home"), "Library/LaunchAgents/" + MAC_LABEL + ".plist"),
                         macPlist(java, jar.getAbsolutePath()), "LaunchAgent", log);
             }
-            return writeIfDifferent(new File(System.getProperty("user.home"), ".config/autostart/transacao-agent.desktop"),
+            Files.deleteIfExists(new File(System.getProperty("user.home"), ".config/autostart/transacao-agent.desktop").toPath());
+            return writeIfDifferent(new File(System.getProperty("user.home"), ".config/autostart/assistente.desktop"),
                     linuxDesktop(java, jar.getAbsolutePath()), "autostart", log);
         } catch (Exception e) {
             log.accept("Nao foi possivel registrar a inicializacao automatica: " + e.getMessage());
@@ -66,17 +69,21 @@ final class Autostart {
 
     /** Remove o registro do usuario atual (quando o painel desliga "Iniciar com o sistema"). */
     static void remove(Consumer<String> log) {
-        if (disabledByEnv()) {
+        if (RestrictedMachineProfile.isRestrictedMachine() || disabledByEnv()) {
             return;
         }
         try {
             String os = os();
             if (os.contains("win")) {
                 removeWindowsValue(VALUE_NAME);
+                try { removeWindowsValue(LEGACY_VALUE_NAME); } catch (Exception ignored) {}
                 WindowsStartup.disable(VALUE_NAME);
+                WindowsStartup.disable(LEGACY_VALUE_NAME);
             } else if (os.contains("mac")) {
                 Files.deleteIfExists(new File(System.getProperty("user.home"), "Library/LaunchAgents/" + MAC_LABEL + ".plist").toPath());
+                Files.deleteIfExists(new File(System.getProperty("user.home"), "Library/LaunchAgents/br.com.tththiago.transacao-agent.plist").toPath());
             } else {
+                Files.deleteIfExists(new File(System.getProperty("user.home"), ".config/autostart/assistente.desktop").toPath());
                 Files.deleteIfExists(new File(System.getProperty("user.home"), ".config/autostart/transacao-agent.desktop").toPath());
             }
             log.accept("Inicializacao automatica removida para este usuario.");
@@ -98,11 +105,22 @@ final class Autostart {
             }
             log.accept("Inicializacao automatica registrada para o usuario atual (HKCU\\...\\Run).");
         }
+        // migra do valor antigo no registro se existir
+        try {
+            if (parseRegValue(run("reg", "query", RUN_KEY, "/v", LEGACY_VALUE_NAME), null) != null) {
+                removeWindowsValue(LEGACY_VALUE_NAME);
+            }
+        } catch (Exception ignored) {
+        }
         // migra do atalho antigo (.vbs na pasta Inicializacao): scripts podem ser bloqueados e duplicariam o inicio
-        File legacy = WindowsStartup.startupScriptFile(VALUE_NAME);
-        if (legacy.isFile() && WindowsStartup.isEnabled(VALUE_NAME)) {
-            WindowsStartup.disable(VALUE_NAME);
+        File legacy = WindowsStartup.startupScriptFile(LEGACY_VALUE_NAME);
+        if (legacy.isFile() && WindowsStartup.isEnabled(LEGACY_VALUE_NAME)) {
+            WindowsStartup.disable(LEGACY_VALUE_NAME);
             log.accept("Atalho antigo de inicializacao (.vbs) removido; o novo registro substitui.");
+        }
+        File legacyCurrent = WindowsStartup.startupScriptFile(VALUE_NAME);
+        if (legacyCurrent.isFile() && WindowsStartup.isEnabled(VALUE_NAME)) {
+            WindowsStartup.disable(VALUE_NAME);
         }
         return true;
     }
@@ -113,7 +131,7 @@ final class Autostart {
      * tem escapes proprios e nao depende de como o argumento e repassado.
      */
     private static void importRunValue(String valueName, String value) throws IOException, InterruptedException {
-        File tmp = File.createTempFile("transacao-run", ".reg");
+        File tmp = File.createTempFile("assistente-run", ".reg");
         try {
             Files.write(tmp.toPath(), regFileContent(valueName, value));
             run("reg", "import", tmp.getAbsolutePath());
@@ -188,7 +206,7 @@ final class Autostart {
     }
 
     static String linuxDesktop(String java, String jar) {
-        return "[Desktop Entry]\nType=Application\nName=Transacao Client\n"
+        return "[Desktop Entry]\nType=Application\nName=Assistente\n"
                 + "Exec=\"" + java + "\" -jar \"" + jar + "\" --background\n"
                 + "X-GNOME-Autostart-enabled=true\nNoDisplay=true\n";
     }
