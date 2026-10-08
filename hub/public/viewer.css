@@ -1,0 +1,111 @@
+body.viewing { overflow: hidden; }
+/* o visualizador e sempre escuro, em qualquer tema: redefine os tokens usados pelos componentes compartilhados */
+#viewer { --surface: #14161b; --surface-2: #1d2129; --fg: #e8eaed; --muted: #9aa3b2; --line: #2a2f3a; --accent: #4f8cff; --accent-fg: #07101f; --bad: #f87171; color-scheme: dark; }
+#viewer { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: #000; color: #e8eaed; }
+#viewer[hidden] { display: none; }
+#viewer .vtitle { font-weight: 600; }
+#viewer .vstate { color: #9aa3b2; font-size: 12px; }
+#viewer button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid #2a2f3a; background: #1d2129; color: #e8eaed; cursor: pointer; }
+#viewer button.danger { background: #b42318; border-color: #b42318; }
+/* a tela remota ocupa TUDO: nada de barra por cima dos controles dela */
+#viewer .vstage { position: absolute; inset: 0; outline: none; background: #000; touch-action: none; cursor: default; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+#viewer .vtext-capture { position: absolute; top: 0; left: 0; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; pointer-events: none; resize: none; user-select: text; -webkit-user-select: text; }
+#viewer video, #viewer canvas { width: 100%; height: 100%; object-fit: contain; display: block; -webkit-user-drag: none; }
+#viewer video[hidden], #viewer canvas[hidden] { display: none; }
+#viewer .vmsg { position: absolute; inset: 0; display: grid; place-items: center; color: #9aa3b2; pointer-events: none; text-align: center; padding: 24px; }
+#viewer .vmsg[hidden] { display: none; }
+
+/* HUD de estatisticas: translucido, sem fundo, nao captura cliques (como o indicador de FPS de jogos) */
+#viewer .vhud { position: absolute; top: 8px; left: 10px; z-index: 4; pointer-events: none; user-select: none; }
+#viewer .vhud[hidden] { display: none; }
+#viewer .vstats { font: 600 12px/1.3 ui-monospace, Consolas, monospace; color: #d6ffd6; opacity: .72; font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 2px #000, 0 0 4px #000, 1px 1px 0 #000; white-space: nowrap; }
+
+/* Bolinha magica */
+#viewer .vorb { position: absolute; z-index: 8; width: 44px; height: 44px; padding: 0; border-radius: 50%; display: grid; place-items: center;
+  background: rgba(20,22,27,.62); border: 1px solid rgba(255,255,255,.28); color: #fff; backdrop-filter: blur(6px);
+  box-shadow: 0 2px 10px rgba(0,0,0,.45); cursor: grab; touch-action: none; transition: opacity .25s, transform .15s; }
+#viewer .vorb:active { cursor: grabbing; }
+#viewer .vorb.idle { opacity: .22; }
+#viewer .vorb:hover, #viewer .vorb.open { opacity: 1; transform: scale(1.05); }
+#viewer .vorb::after { content: ''; position: absolute; right: 3px; top: 3px; width: 10px; height: 10px; border-radius: 50%; background: #f59e0b; border: 1px solid rgba(0,0,0,.5); }
+#viewer .vorb[data-state=ok]::after { background: #22c55e; }
+#viewer .vorb[data-state=bad]::after { background: #ef4444; }
+#viewer .vorb.viewonly { box-shadow: 0 0 0 2px #f59e0b, 0 2px 10px rgba(0,0,0,.45); }
+
+#viewer .vmenu { position: absolute; z-index: 9; width: 230px; display: grid; gap: 6px; padding: 10px; border-radius: 12px;
+  background: rgba(20,22,27,.94); border: 1px solid #2a2f3a; box-shadow: 0 10px 30px rgba(0,0,0,.55); backdrop-filter: blur(8px); }
+#viewer .vmenu[hidden] { display: none; }
+#viewer .vmenu-head { display: grid; gap: 2px; padding: 2px 4px 8px; border-bottom: 1px solid #2a2f3a; margin-bottom: 2px; }
+#viewer .vmenu button { text-align: left; }
+
+#viewer .vbadge { padding: 2px 8px; border-radius: 99px; background: #b54708; color: #fff; font-size: 12px; font-weight: 600; }
+#viewer .vbadge[hidden] { display: none; }
+#viewer .vsettings { position: absolute; top: 12px; right: 64px; z-index: 5; width: min(360px, 92vw); max-height: calc(100vh - 64px); overflow: auto; padding: 12px; background: #14161b; border: 1px solid #2a2f3a; border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.5); }
+#viewer .vsettings[hidden] { display: none; }
+#viewer .vshared { position: absolute; top: 50%; left: 50%; z-index: 10; transform: translate(-50%,-50%); width: min(920px, calc(100vw - 32px)); height: min(680px, calc(100vh - 48px)); overflow: hidden; display: flex; flex-direction: column; border: 1px solid #353b48; border-radius: 14px; background: #111318; box-shadow: 0 24px 80px rgba(0,0,0,.72); }
+#viewer .vshared[hidden] { display: none; }
+#viewer .vshared-head { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 18px; border-bottom: 1px solid #292e38; background: #171a20; }
+#viewer .vshared-head > div { display: grid; gap: 3px; }
+#viewer .vshared-head strong { font-size: 17px; }
+#viewer .vshared-head span { color: #929baa; font-size: 12px; }
+#viewer .vshared-head > button { width: 34px; height: 34px; padding: 0; font-size: 17px; }
+#viewer .vshared-toolbar { min-height: 54px; display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid #292e38; background: #14171c; }
+#viewer .vshared-back { width: 34px; height: 34px; padding: 0; font-size: 26px; line-height: 1; }
+#viewer .vshared-back:disabled { opacity: .35; cursor: default; }
+#viewer .vshared-breadcrumb { min-width: 0; flex: 1; display: flex; align-items: center; gap: 2px; overflow: hidden; }
+#viewer .vshared-breadcrumb button { min-width: 0; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 5px 7px; border-color: transparent; background: transparent; }
+#viewer .vshared-breadcrumb button:hover { background: #252a34; }
+#viewer .vshared-breadcrumb span { color: #697384; }
+#viewer .vshared-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+#viewer .vshared-actions [data-shared-add], #viewer .vshared-actions [data-shared-add-folder] { background: #263044; }
+#viewer .vshared-columns, #viewer .vshared-row { display: grid; grid-template-columns: minmax(260px,1fr) 105px 95px 160px; align-items: center; }
+#viewer .vshared-columns { min-height: 34px; padding: 0 14px; border-bottom: 1px solid #292e38; color: #858e9d; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+#viewer .vshared-list { flex: 1; min-height: 0; overflow: auto; padding: 4px 6px; outline: none; }
+#viewer .vshared-row { min-height: 42px; padding: 0 8px; border-radius: 7px; cursor: default; user-select: none; }
+#viewer .vshared-row:hover { background: #1d222b; }
+#viewer .vshared-row.selected { background: #245ca8; color: #fff; }
+#viewer .vshared-row:focus-visible { outline: 2px solid #6ba4ff; outline-offset: -2px; }
+#viewer .vshared-name-cell { min-width: 0; display: flex; align-items: center; gap: 9px; }
+#viewer .vshared-icon { width: 22px; height: 22px; flex: none; color: #c4ccd8; }
+#viewer .vshared-row.folder .vshared-icon { color: #68a8ff; }
+#viewer .vshared-icon svg { width: 22px; height: 22px; fill: currentColor; stroke: #0d1118; stroke-width: .6; }
+#viewer .vshared-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#viewer .vshared-type, #viewer .vshared-size, #viewer .vshared-modified { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #aab2bf; font-size: 12px; }
+#viewer .vshared-row.selected .vshared-type, #viewer .vshared-row.selected .vshared-size, #viewer .vshared-row.selected .vshared-modified { color: #eaf2ff; }
+#viewer .vshared-empty { height: 100%; display: grid; place-items: center; color: #8e97a5; }
+#viewer .vshared-status { min-height: 30px; display: flex; align-items: center; padding: 0 16px; border-top: 1px solid #292e38; color: #858e9d; font-size: 12px; background: #14171c; }
+@media (max-width: 700px) {
+  #viewer .vshared { width: calc(100vw - 16px); height: calc(100vh - 24px); }
+  #viewer .vshared-toolbar { flex-wrap: wrap; }
+  #viewer .vshared-breadcrumb { order: 1; flex-basis: calc(100% - 42px); }
+  #viewer .vshared-actions { order: 2; width: 100%; }
+  #viewer .vshared-columns, #viewer .vshared-row { grid-template-columns: minmax(160px,1fr) 80px; }
+  #viewer .vshared-columns span:nth-child(3), #viewer .vshared-columns span:nth-child(4), #viewer .vshared-size, #viewer .vshared-modified { display: none; }
+}
+#viewer .vsettings-title { font-weight: 600; margin-bottom: 10px; }
+#viewer .settings { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 0; padding: 0; border: 0; }
+#viewer label.opt { display: flex; align-items: center; gap: 8px; }
+#viewer input[type=text], #viewer select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid #2a2f3a; background: #1d2129; color: #e8eaed; width: 100%; }
+#viewer .sub { color: #9aa3b2; font-size: 13px; }
+
+.teams-card .teams-opts { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line, #2a2f3a); display: grid; gap: 10px; }
+.teams-log { margin: 0; max-height: 9em; overflow: auto; font: 12px/1.4 ui-monospace, monospace; color: var(--muted, #9aa3b2); white-space: pre-wrap; }
+#teams-modal { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: rgba(0,0,0,.55); }
+#teams-modal[hidden] { display: none; }
+#teams-modal .teams-modal-box { background: var(--card, #181b22); color: var(--fg, #e8eaed); border: 2px solid #b42318; border-radius: 12px; padding: 24px 28px; max-width: min(520px, 92vw); }
+#teams-modal h2 { margin: 0 0 8px; color: #f04438; }
+
+#viewer .vtoast { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 6; padding: 8px 14px; border-radius: 8px; background: #1d2129; border: 1px solid #2a2f3a; color: #e8eaed; font-size: 13px; }
+#viewer .vtoast[hidden] { display: none; }
+
+
+/* Cursor virtual de toque (celular/tablet): o dedo ARRASTA este cursor, nunca pula pra onde tocou. */
+#viewer .vcursor { position: fixed; z-index: 7; width: 26px; height: 26px; margin: -2px 0 0 -3px; pointer-events: none; filter: drop-shadow(0 1px 2px rgba(0,0,0,.65)); }
+#viewer .vcursor[hidden] { display: none; }
+
+/* Teclado na tela: foca o campo para abrir o teclado do celular; cada tecla e repassada e o campo some. */
+#viewer .vkeyboard { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 8; display: flex; gap: 8px; padding: 10px; border-radius: 12px; background: rgba(20,22,27,.94); border: 1px solid #2a2f3a; backdrop-filter: blur(8px); }
+#viewer .vkeyboard[hidden] { display: none; }
+#viewer .vkb-input { flex: 1; min-width: 0; font-size: 16px; padding: 10px 12px; border-radius: 8px; border: 1px solid #2a2f3a; background: #1d2129; color: #e8eaed; }
+#viewer .vkb-close { flex: none; }

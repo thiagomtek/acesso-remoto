@@ -1137,10 +1137,6 @@ public class ClientApp extends JFrame {
         return img;
     }
 
-    /** Hash SHA-256 da senha exigida so na primeira vez que o app e aberto neste perfil do Windows. */
-    private static final String FIRST_RUN_PASSWORD_HASH =
-            "33d8409460375496ba3f9fc38626c31f511c1243a56ac1f590c6c07e302e28be";
-
     public static void main(String[] args) {
         System.setProperty("java.net.preferIPv4Stack", "true");
         boolean isBackground = false;
@@ -1155,7 +1151,7 @@ public class ClientApp extends JFrame {
         }
         final boolean background = isBackground;
         SwingUtilities.invokeLater(() -> {
-            if (!FirstRunGate.isActivated(STARTUP_APP_NAME) && !promptForFirstRunPassword()) {
+            if (!FirstRunGate.requirePassword(STARTUP_APP_NAME)) {
                 System.exit(0);
                 return;
             }
@@ -1165,42 +1161,5 @@ public class ClientApp extends JFrame {
                 app.setVisible(true);
             }
         });
-    }
-
-    private static boolean promptForFirstRunPassword() {
-        while (true) {
-            JPasswordField passwordField = new JPasswordField();
-            int result = JOptionPane.showConfirmDialog(null, passwordField,
-                    "Senha necessaria para o primeiro uso", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
-            if (result != JOptionPane.OK_OPTION) {
-                return false;
-            }
-            char[] entered = passwordField.getPassword();
-            boolean correct = hashMatches(entered);
-            java.util.Arrays.fill(entered, '\0');
-            if (correct) {
-                try {
-                    FirstRunGate.markActivated(STARTUP_APP_NAME);
-                } catch (Exception ignored) {
-                }
-                return true;
-            }
-            JOptionPane.showMessageDialog(null, "Senha incorreta.", "Erro", JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    private static boolean hashMatches(char[] entered) {
-        try {
-            byte[] bytes = new String(entered).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(bytes);
-            StringBuilder hex = new StringBuilder();
-            for (byte b : hash) {
-                hex.append(String.format("%02x", b));
-            }
-            return hex.toString().equals(FIRST_RUN_PASSWORD_HASH);
-        } catch (Exception e) {
-            return false;
-        }
     }
 }

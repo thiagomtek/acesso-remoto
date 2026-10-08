@@ -1,5 +1,9 @@
 # Acesso Remoto
 
+> **Novo (principal): acesso remoto centralizado** — agentes disparam para um hub acessível pela Tailnet (Tailscale) e o operador acessa pelo navegador, com login por conta. Veja **[docs/ARQUITETURA.md](docs/ARQUITETURA.md)** e **[docs/REGRAS-DE-NEGOCIO.md](docs/REGRAS-DE-NEGOCIO.md)**. Pastas: `hub/` (serviço), `agent/` (client).
+>
+> O restante deste README descreve o **sistema legado** (Servidor + Client por conexão TLS direta na rede local/VPN), que continua em `src/`.
+
 Aplicativo Java (Swing, sem Maven/Gradle) com dois papeis, **Servidor** e **Client**, que juntos oferecem transferencia de arquivos, acesso remoto (tela, mouse, teclado), audio e atualizacao automatica sobre uma unica conexao TLS com autenticacao mutua.
 
 - **Servidor** (`com.transacao.server.ServerApp`): fica ouvindo uma porta e aceita conexoes de varios clients ao mesmo tempo.

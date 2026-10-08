@@ -1,0 +1,44 @@
+﻿# Deploy no homelab: /mnt/d/Servidores/Servicos/remote-hub
+# Segredos em /etc/hub-env/remote-hub.env (disco nativo da VM; ver .env.example).
+services:
+  remote-hub:
+    build: .
+    container_name: remote-hub
+    restart: unless-stopped
+    env_file: /etc/hub-env/remote-hub.env
+    volumes:
+      - /mnt/d/Servidores/Servicos/remote-hub/data:/data   # entra no backup Restic
+    # So o Caddy (TLS em servidor.tail074692.ts.net:8787) alcanca o hub, via 172.17.0.1:8788 (bridge do Docker, alcancavel pelo container do Caddy).
+    ports:
+      - "172.17.0.1:8788:8080"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  coturn:
+    image: coturn/coturn:4.6
+    container_name: remote-coturn
+    restart: unless-stopped
+    network_mode: host   # evita proxy de ~50 portas UDP do relay pelo Docker
+    env_file: /etc/hub-env/remote-hub.env
+    # O IP publico e dinamico: resolvido a partir do DDNS a cada (re)inicio do container.
+    # --external-ip PUBLICO/PRIVADO, pois a VM esta atras do NAT do VirtualBox.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        PUB=$$(getent hosts "$$TURN_DDNS_HOST" | cut -d' ' -f1 | head -n1)
+        [ -n "$$PUB" ] || { echo "nao resolveu $$TURN_DDNS_HOST"; exit 1; }
+        echo "IP publico: $$PUB"
+        exec turnserver -n --log-file=stdout --no-cli --fingerprint \
+          --use-auth-secret --static-auth-secret="$$TURN_SECRET" \
+          --realm="$$TURN_REALM" \
+          --listening-port=3478 --min-port=49152 --max-port=49200 \
+          --external-ip="$$PUB/$$TURN_PRIVATE_IP" \
+          --no-multicast-peers --no-tcp-relay \
+          --denied-peer-ip=10.0.0.0-10.255.255.255 \
+          --denied-peer-ip=172.16.0.0-172.31.255.255 \
+          --denied-peer-ip=192.168.0.0-192.168.255.255 \
+          --denied-peer-ip=127.0.0.0-127.255.255.255
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

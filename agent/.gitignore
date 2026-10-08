@@ -1,0 +1,5 @@
+lib/
+out/
+dist/
+*.zip
+test-out/
