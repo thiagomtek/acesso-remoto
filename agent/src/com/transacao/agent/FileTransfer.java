@@ -15,25 +15,6 @@ import java.util.function.Consumer;
 final class FileTransfer {
     private FileTransfer() { }
 
-    static void upload(AgentConfig cfg, String sessionId, byte[] data, Consumer<String> log) {
-        if (data == null || data.length == 0 || data.length > 512 * 1024 * 1024) {
-            log.accept("Transferencia de arquivo recusada pelo limite de tamanho.");
-            return;
-        }
-        try {
-            HttpRequest.Builder b = request(cfg, urlBase(cfg) + "/transfers/upload")
-                    .header("x-transfer-session", sessionId)
-                    .header("x-transfer-name", "arquivos-remotos.zip")
-                    .POST(HttpRequest.BodyPublishers.ofByteArray(data));
-            int status = httpClient(cfg)
-                    .send(b.build(), HttpResponse.BodyHandlers.discarding()).statusCode();
-            if (status != 201) throw new IOException("HTTP " + status);
-            log.accept("Arquivo enviado ao operador.");
-        } catch (Exception e) {
-            log.accept("Falha ao enviar arquivo ao operador: " + e.getClass().getSimpleName());
-        }
-    }
-
     static void downloadToReceipts(AgentConfig cfg, String transferId, String name, long expectedSize, Consumer<String> log,
                                   Consumer<Boolean> completion) {
         try {
@@ -57,20 +38,6 @@ final class FileTransfer {
             log.accept("Falha ao receber arquivo: " + e.getClass().getSimpleName());
             completion.accept(false);
         }
-    }
-
-    /** Download temporario em memoria para clipboard; nunca materializa a imagem em recebimentos. */
-    static byte[] downloadBytes(AgentConfig cfg, String transferId, long expectedSize, int maxBytes) throws Exception {
-        if (transferId == null || !transferId.matches("[a-fA-F0-9-]{36}") || expectedSize < 1 || expectedSize > maxBytes) {
-            throw new IOException("metadados invalidos");
-        }
-        HttpRequest request = request(cfg, urlBase(cfg) + "/transfers/" + transferId).GET().build();
-        HttpResponse<byte[]> r = httpClient(cfg)
-                .send(request, HttpResponse.BodyHandlers.ofByteArray());
-        if (r.statusCode() != 200 || r.body().length != expectedSize || r.body().length > maxBytes) {
-            throw new IOException("transferencia invalida");
-        }
-        return r.body();
     }
 
     private static HttpClient httpClient(AgentConfig cfg) {

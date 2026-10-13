@@ -116,12 +116,6 @@ function bindSocket(socket, route) {
       if (m.sessionId === viewer.sessionId) viewer.onCompatPong(m.data);
     } else if (m.type === 'telemetry-ack') {
       viewer.onTelemetryAck(m.ids);
-    } else if (m.type === 'input-result') {
-      viewer.onInputResult(m.data);
-    } else if (m.type === 'file-ready') {
-      if (m.sessionId === viewer.sessionId) viewer.onFileReady(m);
-    } else if (m.type === 'file-status') {
-      if (m.sessionId === viewer.sessionId) viewer.onFileStatus(m);
     } else if (m.type === 'session-closed') {
       if (m.sessionId === viewer.sessionId) viewer.close(false);
     } else if (m.type === 'error') {

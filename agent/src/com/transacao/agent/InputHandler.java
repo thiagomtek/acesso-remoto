@@ -23,29 +23,23 @@ final class InputHandler {
         void onViewport(int w, int h);
     }
 
-    interface TraceListener {
-        void onResult(long seq, String trace, String command, String result);
-    }
-
     private final AgentSettings settings;
     private final InputSupplier input;
     private final ViewportListener viewport;
     private final Runnable afterInput;
     private final Consumer<String> log;
-    private final TraceListener trace;
     /** Codigos que efetivamente foram pressionados pelo caminho nativo de scancode. */
     private final Set<String> nativePhysicalDown = new HashSet<>();
     private boolean unicodeFallbackLogged;
 
     /** @param afterInput chamado apos cada comando aplicado (ex.: acordar a captura para o resultado aparecer logo). */
     InputHandler(AgentSettings settings, InputSupplier input, ViewportListener viewport, Runnable afterInput,
-                 Consumer<String> log, TraceListener trace) {
+                 Consumer<String> log) {
         this.settings = settings;
         this.input = input;
         this.viewport = viewport;
         this.afterInput = afterInput;
         this.log = log;
-        this.trace = trace;
     }
 
     /** Posicao do mouse normalizada (0..1) vinda do canal "mouse" ("x,y"). */
@@ -63,15 +57,10 @@ final class InputHandler {
     }
 
     void handleControl(Map<String, Object> m) {
-        String command = Json.str(m, "t");
-        String traceId = Json.str(m, "trace");
-        long seq = (long) Json.num(m, "q", 0);
         try {
-            String result = apply(m);
-            report(seq, traceId, command, result);
+            apply(m);
         } catch (Exception e) {
             log.accept("Comando remoto ignorado: " + e.getMessage());
-            report(seq, traceId, command, "error");
         }
     }
 
@@ -151,12 +140,6 @@ final class InputHandler {
         }
         afterInput.run();
         return "applied";
-    }
-
-    private void report(long seq, String traceId, String command, String result) {
-        if (trace != null && seq > 0 && traceId != null && command != null) {
-            trace.onResult(seq, traceId, command, result);
-        }
     }
 
     private void moveTo(double nx, double ny) throws Exception {

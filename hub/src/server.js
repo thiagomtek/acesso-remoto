@@ -345,13 +345,11 @@ export function createHub(opts = {}) {
       const id = randomUUID();
       const path = join(transferDir, id + '.bin');
       const name = safeFileName(headerName(req.headers['x-transfer-name']));
-      const kind = req.headers['x-transfer-kind'] === 'clipboard-image' ? 'clipboard-image' : 'file';
       try {
-        const size = await readUpload(req, path, kind === 'clipboard-image' ? 25 * 1024 * 1024 : undefined);
-        if (kind === 'clipboard-image' && (!fromOperator || size < 1 || size > 25 * 1024 * 1024)) throw new Error('invalid clipboard image');
-        const item = { path, sessionId, clientId: session.clientId, operatorEmail: session.operatorEmail, name, size, fromAgent, kind, createdAt: Date.now() };
+        const size = await readUpload(req, path);
+        const item = { path, sessionId, clientId: session.clientId, operatorEmail: session.operatorEmail, name, size, fromAgent, createdAt: Date.now() };
         transfers.set(id, item);
-        const deliveredToPeer = kind === 'clipboard-image' ? true : fromAgent
+        const deliveredToPeer = fromAgent
           ? send(session.operatorWs, { type: 'file-ready', sessionId, transferId: id, name, size })
           : send(agents.get(session.clientId)?.ws, { type: 'file-download', sessionId, transferId: id, name, size });
         if (!deliveredToPeer) {
@@ -385,12 +383,7 @@ export function createHub(opts = {}) {
         'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(item.name)}`,
         'cache-control': 'no-store',
       });
-      const stream = createReadStream(item.path);
-      if (item.kind === 'clipboard-image') stream.once('close', () => {
-        transfers.delete(id);
-        try { unlinkSync(item.path); } catch { /* ja removido */ }
-      });
-      stream.pipe(res);
+      createReadStream(item.path).pipe(res);
       return;
     }
     // Pacote de atualizacao: so para agentes autenticados (Service Token + credencial propria) e aprovados.
@@ -652,17 +645,6 @@ export function createHub(opts = {}) {
               send(s.operatorWs, { type: 'file-status', sessionId, transferId, delivered });
               broadcastClients();
             }
-          } else if (msg.event === 'input-result') {
-            const d = msg.data || {};
-            const s = sessions.get(d.sessionId);
-            const trace = typeof d.trace === 'string' ? d.trace.slice(0, 100) : '';
-            const result = d.result === 'applied' ? 'applied' : 'rejected';
-            // Confirma somente o fluxo funcional que espera resposta (ex.: imagem de clipboard),
-            // sem persistir auditoria por comando.
-            if (trace) {
-              send(ws, { type: 'input-result-ack', trace });
-              if (s?.clientId === id) send(s.operatorWs, { type: 'input-result', sessionId: d.sessionId, data: { trace, result } });
-            }
           } else if (msg.event === 'input-activity') {
             // Compatibilidade com agentes antigos: drena a fila sem persistir atividade de entrada.
             const d = msg.data || {};
@@ -829,15 +811,6 @@ export function createHub(opts = {}) {
   pinger.unref();
   const updateTimer = setInterval(() => {
     for (const [id, entry] of agents) offerUpdate(id, entry);
-    // Imagens de clipboard do modo compatibilidade sao descartaveis. Se a sessao cair antes de o
-    // agente baixa-las, nao deixe o blob temporario acumular no hub.
-    const clipboardExpiry = Date.now() - 5 * 60_000;
-    for (const [id, item] of transfers) {
-      if (item.kind === 'clipboard-image' && item.createdAt < clipboardExpiry) {
-        transfers.delete(id);
-        try { unlinkSync(item.path); } catch { /* ja removido */ }
-      }
-    }
     for (const [ticket, entry] of lanTickets) if (entry.expiresAt < Date.now()) lanTickets.delete(ticket);
     for (const [key, at] of agentLogThrottle) if (Date.now() - at > 30 * 60_000) agentLogThrottle.delete(key);
   }, 60_000);

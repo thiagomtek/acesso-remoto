@@ -27,7 +27,6 @@ final class CompatSession {
     private final InputHandler.InputSupplier input;
     private final Predicate<byte[]> sendBinary;
     private final Consumer<String> log;
-    private final InputHandler.TraceListener trace;
     private final Object writeLock = new Object();
 
     // Dois streamers com a mesma interface: o novo (CopyRect + JPEG/refinamento + fluxo) e o original
@@ -43,13 +42,12 @@ final class CompatSession {
     private volatile boolean closed;
 
     CompatSession(String sessionId, AgentSettings settings, InputHandler.InputSupplier input,
-                  Predicate<byte[]> sendBinary, Consumer<String> log, InputHandler.TraceListener trace) {
+                  Predicate<byte[]> sendBinary, Consumer<String> log) {
         this.sessionId = sessionId;
         this.settings = settings;
         this.input = input;
         this.sendBinary = sendBinary;
         this.log = log;
-        this.trace = trace;
     }
 
     String id() {
@@ -98,7 +96,7 @@ final class CompatSession {
                 },
                 // Acorda a captura na hora, em vez de esperar o intervalo ocioso: e o que faz o
                 // resultado de um clique aparecer logo para quem esta controlando.
-                () -> wake.run(), log, trace);
+                () -> wake.run(), log);
         profileSetter.accept(settings.quality);
         RemoteMessageSender.sendScreenSize(out, writeLock, screenSize, dpi);
         thread = new Thread(runner, "compat-streamer-" + sessionId.substring(0, 8));

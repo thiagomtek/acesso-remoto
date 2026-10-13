@@ -26,7 +26,6 @@ import dev.onvoid.webrtc.SetSessionDescriptionObserver;
 import dev.onvoid.webrtc.media.MediaType;
 
 import java.awt.Rectangle;
-import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -44,10 +43,6 @@ import java.util.function.Consumer;
  */
 final class RemoteSession implements PeerConnectionObserver {
 
-    interface ClipboardImageApplier {
-        boolean apply(byte[] png, String sha256);
-    }
-
     private static final String[] CODEC_PRIORITY = {"video/H264", "video/VP9", "video/AV1", "video/VP8"};
 
     private final String sessionId;
@@ -57,8 +52,6 @@ final class RemoteSession implements PeerConnectionObserver {
     private final AgentSettings settings;
     private final InputHandler inputHandler;
     private final Consumer<String> applyClipboard;
-    private final ClipboardImageApplier applyClipboardImage;
-    private final InputHandler.TraceListener trace;
     private final Consumer<Map<String, Object>> sendRtc;
     private final Consumer<String> log;
 
@@ -77,16 +70,10 @@ final class RemoteSession implements PeerConnectionObserver {
     private volatile boolean connected;
     private int viewportW;
     private int viewportH;
-    private ByteArrayOutputStream incomingClipboardImage;
-    private int incomingClipboardImageSize;
-    private long incomingClipboardImageSeq;
-    private String incomingClipboardImageTrace;
-    private String incomingClipboardImageSha;
-
     RemoteSession(String sessionId, List<Map<String, Object>> iceServers, PeerConnectionFactory factory, ScreenSource screen,
                   AgentSettings settings, InputHandler.InputSupplier input, Consumer<String> applyClipboard,
-                  ClipboardImageApplier applyClipboardImage, Consumer<Map<String, Object>> sendRtc,
-                  Consumer<String> log, InputHandler.TraceListener trace,
+                  Consumer<Map<String, Object>> sendRtc,
+                  Consumer<String> log,
                   Executor async, Runnable onFailure) {
         this.async = async;
         this.onFailure = onFailure;
@@ -96,13 +83,11 @@ final class RemoteSession implements PeerConnectionObserver {
         this.screen = screen;
         this.settings = settings;
         this.applyClipboard = applyClipboard;
-        this.applyClipboardImage = applyClipboardImage;
-        this.trace = trace;
         this.inputHandler = new InputHandler(settings, input, (w, h) -> {
             viewportW = w;
             viewportH = h;
             applyEncoding();
-        }, () -> { }, log, trace);
+        }, () -> { }, log);
         this.sendRtc = sendRtc;
         this.log = log;
     }
@@ -375,7 +360,6 @@ final class RemoteSession implements PeerConnectionObserver {
                 hello.put("lw", lb.width);
                 hello.put("lh", lb.height);
                 hello.put("control", settings.allowRemoteControl);
-                hello.put("clipboardImageV1", true);
                 sendCtl(hello);
             }
         }
@@ -383,7 +367,6 @@ final class RemoteSession implements PeerConnectionObserver {
         @Override
         public void onMessage(RTCDataChannelBuffer buffer) {
             if (buffer.binary) {
-                if (control) receiveClipboardImageChunk(buffer.data);
                 return;
             }
             ByteBuffer b = buffer.data;
@@ -398,9 +381,6 @@ final class RemoteSession implements PeerConnectionObserver {
                     // pelo hub tem latencia diferente do WebRTC.
                     if ("clip".equals(Json.str(command, "t"))) {
                         applyClipboard.accept(Json.str(command, "text"));
-                        if (trace != null) trace.onResult((long) Json.num(command, "q", 0), Json.str(command, "trace"), "clip", "applied");
-                    } else if ("clip-image-start".equals(Json.str(command, "t"))) {
-                        beginClipboardImage(command);
                     } else {
                         inputHandler.handleControl(command);
                     }
@@ -411,61 +391,6 @@ final class RemoteSession implements PeerConnectionObserver {
                 log.accept("Comando remoto ignorado: " + e.getMessage());
             }
         }
-    }
-
-    private synchronized void beginClipboardImage(Map<String, Object> command) {
-        if (incomingClipboardImage != null) finishClipboardImage("replaced");
-        int size = (int) Json.num(command, "size", 0);
-        String sha = Json.str(command, "sha256");
-        long seq = (long) Json.num(command, "q", 0);
-        String traceId = Json.str(command, "trace");
-        if (!settings.clipboardSync || size < 1 || size > ClipboardImage.MAX_BYTES || sha == null
-                || !sha.matches("[a-fA-F0-9]{64}") || seq < 1 || traceId == null) {
-            if (trace != null) trace.onResult(seq, traceId, "clip-image-start", "invalid");
-            return;
-        }
-        incomingClipboardImage = new ByteArrayOutputStream(size);
-        incomingClipboardImageSize = size;
-        incomingClipboardImageSeq = seq;
-        incomingClipboardImageTrace = traceId;
-        incomingClipboardImageSha = sha;
-    }
-
-    private synchronized void receiveClipboardImageChunk(ByteBuffer source) {
-        if (incomingClipboardImage == null) return;
-        byte[] chunk = new byte[source.remaining()];
-        source.get(chunk);
-        if (incomingClipboardImage.size() + chunk.length > incomingClipboardImageSize) {
-            finishClipboardImage("invalid");
-            return;
-        }
-        incomingClipboardImage.write(chunk, 0, chunk.length);
-        if (incomingClipboardImage.size() == incomingClipboardImageSize) {
-            byte[] png = incomingClipboardImage.toByteArray();
-            long seq = incomingClipboardImageSeq;
-            String traceId = incomingClipboardImageTrace;
-            String sha = incomingClipboardImageSha;
-            clearClipboardImage();
-            async.execute(() -> {
-                boolean ok = settings.clipboardSync && applyClipboardImage.apply(png, sha);
-                if (trace != null) trace.onResult(seq, traceId, "clip-image-start", ok ? "applied" : "rejected");
-            });
-        }
-    }
-
-    private void finishClipboardImage(String result) {
-        long seq = incomingClipboardImageSeq;
-        String traceId = incomingClipboardImageTrace;
-        clearClipboardImage();
-        if (trace != null) trace.onResult(seq, traceId, "clip-image-start", result);
-    }
-
-    private void clearClipboardImage() {
-        incomingClipboardImage = null;
-        incomingClipboardImageSize = 0;
-        incomingClipboardImageSeq = 0;
-        incomingClipboardImageTrace = null;
-        incomingClipboardImageSha = null;
     }
 
     /**

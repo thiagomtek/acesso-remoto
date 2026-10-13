@@ -2,11 +2,6 @@
 // mouse/teclado por canais de dados. A sinalizacao passa pelo hub; a midia nao.
 
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
-// Somente operacoes que precisam de confirmacao funcional recebem trace. Teclado e mouse seguem
-// direto pelo transporte, sem telemetria, persistencia local ou log por comando.
-const CONFIRMED_INPUT_EVENTS = new Set(['clip-image', 'clip-image-start']);
-const TRACE_OUTBOX_KEY = 'remoteInputTraceOutbox.v1';
-
 import { buildSettingsPanel } from './settings.js';
 import { mountOrb } from './orb.js';
 
@@ -33,20 +28,11 @@ export class Viewer {
     // tap = clique esquerdo e toque de 2 dedos = clique direito - ver onTouchStart/Move/End.
     this.touch = { active: false, cursor: { x: 0.5, y: 0.5 }, pointers: new Map(), gesture: null };
     this.pressedCodes = new Set(); // codigos (kd) ja enviados e ainda sem o ku correspondente
-    this.pendingDownloads = [];
-    this.pendingUploads = new Set();
-    this.filePasteGeneration = 0;
-    this.suppressFilePasteKeyupUntil = 0;
     this.compatProbe = null;
     this.compatPingMs = null;
     this.compatJitterMs = null;
     this.compatPreviousPingMs = null;
     this.compatProbeSequence = 0;
-    this.traceSequence = 0;
-    try { window.localStorage?.removeItem(TRACE_OUTBOX_KEY); } catch { /* armazenamento indisponivel */ }
-    this.traceResults = new Map();
-    this.inputWaiters = new Map();
-    this.clipboardImageV1 = false;
     this.build();
   }
 
@@ -222,11 +208,6 @@ export class Viewer {
     s.addEventListener('selectstart', (e) => { if (e.target !== this.textCapture) e.preventDefault(); });
     s.addEventListener('dragstart', (e) => e.preventDefault());
     s.addEventListener('mousedown', (e) => { if (e.button === 2) e.preventDefault(); });
-    s.addEventListener('dragover', (e) => e.preventDefault());
-    s.addEventListener('drop', (e) => {
-      e.preventDefault();
-      this.uploadFiles([...e.dataTransfer.files]);
-    });
     s.addEventListener('wheel', (e) => {
       e.preventDefault();
       const notches = Math.max(1, Math.round(Math.abs(e.deltaY) / 100));
@@ -271,14 +252,6 @@ export class Viewer {
       }
 
       if (!down) {
-        // O ClipboardEvent confirmou que este Ctrl/Cmd+V continha arquivo. Nem pressiona nem solta V
-        // na maquina remota, para ela nao colar um conteudo antigo do proprio clipboard.
-        if (e.code === 'KeyV' && performance.now() < this.suppressFilePasteKeyupUntil) {
-          this.pressedCodes.delete(code);
-          e.preventDefault();
-          e.stopPropagation();
-          return;
-        }
         if (mac && (e.code === 'AltLeft' || e.code === 'AltRight') && this.deferredAltCode === e.code) {
           this.deferredAltCode = null;
           return;
@@ -355,15 +328,10 @@ export class Viewer {
       // Chama JA (fora do queueKey) para preservar a "user activation" exigida pelo Safari no
       // clipboard.readText() - encadeado numa Promise do queueKey, o navegador pode rejeitar por
       // nao ser mais chamado "direto" do gesto do usuario.
-      const pasteGeneration = this.filePasteGeneration;
       const clipPromise = isPaste ? this.readLocalClipboard() : null;
       this.queueKey(async () => {
         if (clipPromise) {
           const clip = await clipPromise;
-          // `paste` entrega arquivos pelo ClipboardEvent depois do keydown. Espera apenas o fim do
-          // gesto para nao mandar Ctrl+V nem texto residual para o Windows quando a intencao era arquivo.
-          await new Promise((resolve) => setTimeout(resolve, 0));
-          if (this.filePasteGeneration !== pasteGeneration) return;
           if (clip.error) this.toast('Não foi possível ler a área de transferência local (permita o acesso ao colar)');
           else if (clip.text) this.sendCtl({ t: 'clip', text: clip.text });
         }
@@ -372,29 +340,6 @@ export class Viewer {
     };
     window.addEventListener('keydown', this.keyHandler, true);
     window.addEventListener('keyup', this.keyHandler, true);
-    this.pasteHandler = (e) => {
-      if (this.el.hidden || !this.ready() || this.client?.settings?.clipboardSync === false) return;
-      const files = [...(e.clipboardData?.files || [])].filter((file) => file?.size >= 0);
-      // Safari pode expor a captura apenas em DataTransfer.items, enquanto Chromium normalmente
-      // tambem preenche files. Consulte os dois sem duplicar o mesmo objeto.
-      for (const item of [...(e.clipboardData?.items || [])]) {
-        const file = item?.kind === 'file' ? item.getAsFile?.() : null;
-        if (file && file.size >= 0 && !files.includes(file)) files.push(file);
-      }
-      if (!files.length) return;
-      this.filePasteGeneration++;
-      this.suppressFilePasteKeyupUntil = performance.now() + 1_000;
-      e.preventDefault();
-      e.stopPropagation();
-      const image = files.find((file) => file.type === 'image/png');
-      if (image && this.clipboardImageV1) {
-        void this.sendClipboardImage(image, true);
-      } else {
-        this.uploadFiles(files, true); // agente antigo: preserva o comportamento anterior
-      }
-    };
-    window.addEventListener('paste', this.pasteHandler, true);
-
     // Rede de seguranca: Alt+Tab/Cmd+Tab saindo do navegador (ou a aba ficar oculta) nao gera o
     // keyup correspondente aqui (o SO entrega o evento pro app que ganhou o foco, nao pra pagina) -
     // sem isso, modificadores como Ctrl ficam fisicamente "pressionados" na maquina remota.
@@ -609,16 +554,6 @@ export class Viewer {
     this.keyChain = this.keyChain.then(fn).catch(() => {});
   }
 
-  /** Envia o texto da area de transferencia local (se a configuracao da maquina permite). */
-  async sendLocalClipboard() {
-    const result = await this.readLocalClipboard();
-    if (result.error) {
-      this.toast('Não foi possível ler a área de transferência local (permita o acesso ao colar)');
-      return;
-    }
-    if (result.text) this.sendCtl({ t: 'clip', text: result.text });
-  }
-
   /** Le o texto ainda dentro do gesto do usuario; o envio fica a cargo do chamador. */
   async readLocalClipboard() {
     if (this.client?.settings?.clipboardSync === false || !this.sessionId) return { text: '' };
@@ -669,109 +604,6 @@ export class Viewer {
   sendRemoteText(text) {
     if (!text || !this.ready() || this.el.hidden) return;
     this.queueKey(() => this.sendCtl({ t: 'kt', ch: text }));
-  }
-
-  /** Arquivos do operador vao pelo hub autenticado, sem depender do clipboard que navegadores restringem. */
-  async uploadFiles(files, fromClipboard = false) {
-    if (!this.sessionId || !files?.length) return;
-    if (fromClipboard && this.client?.settings?.clipboardSync === false) {
-      this.toast('Sincronização da área de transferência está desativada nesta máquina');
-      return;
-    }
-    for (const file of files) {
-      if (file.size > 512 * 1024 * 1024) { this.toast('Arquivo maior que 512 MB não foi enviado'); continue; }
-      try {
-        this.toast('Enviando arquivo para recebimentos da máquina…');
-        const r = await fetch('/transfers/upload', {
-          method: 'POST', credentials: 'same-origin', body: file,
-          headers: { 'x-transfer-session': this.sessionId, 'x-transfer-name': encodeURIComponent(file.name) },
-        });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        const receipt = await r.json();
-        if (receipt?.id) this.pendingUploads.add(receipt.id);
-        this.toast('Arquivo enviado ao hub; aguardando confirmação da máquina…');
-      } catch {
-        this.toast('Não foi possível enviar o arquivo à máquina');
-      }
-    }
-  }
-
-  /** Imagem copiada: WebRTC envia direto; compatibilidade usa blob temporario autenticado no hub. */
-  async sendClipboardImage(blob, pasteAfter = false) {
-    if (!this.sessionId || !this.clipboardImageV1 || blob?.type !== 'image/png') return false;
-    if (blob.size < 1 || blob.size > 25 * 1024 * 1024) {
-      this.toast('A imagem copiada excede o limite de 25 MB');
-      return false;
-    }
-    try {
-      this.toast('Enviando imagem para a área de transferência remota…');
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-      const digest = await crypto.subtle.digest('SHA-256', bytes);
-      const sha256 = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-      let trace;
-      if (this.mode === 'compat') {
-        const upload = await fetch('/transfers/upload', {
-          method: 'POST', credentials: 'same-origin', body: blob,
-          headers: { 'x-transfer-session': this.sessionId, 'x-transfer-name': 'clipboard.png', 'x-transfer-kind': 'clipboard-image' },
-        });
-        if (!upload.ok) throw new Error('upload');
-        const receipt = await upload.json();
-        trace = this.sendCtl({ t: 'clip-image', transferId: receipt.id, size: bytes.length, sha256 });
-      } else {
-        trace = this.sendCtl({ t: 'clip-image-start', size: bytes.length, sha256 });
-        if (typeof trace !== 'string') throw new Error('channel');
-        for (let offset = 0; offset < bytes.length; offset += 16 * 1024) {
-          while (this.ctl?.bufferedAmount > 1024 * 1024) await new Promise((resolve) => setTimeout(resolve, 10));
-          if (this.ctl?.readyState !== 'open') throw new Error('channel');
-          const chunk = bytes.slice(offset, Math.min(bytes.length, offset + 16 * 1024));
-          this.ctl.send(chunk.buffer);
-        }
-      }
-      const result = await this.waitInputResult(trace, 30_000);
-      if (result !== 'applied') throw new Error(result || 'timeout');
-      this.toast('Imagem recebida pela área de transferência da máquina');
-      if (pasteAfter) this.pasteRemoteClipboard();
-      return true;
-    } catch {
-      this.toast('Não foi possível enviar a imagem para a área de transferência remota');
-      return false;
-    }
-  }
-
-  pasteRemoteClipboard() {
-    const macRemote = /mac/i.test(this.client?.info?.os || '');
-    const modifier = macRemote ? 'MetaLeft' : 'ControlLeft';
-    this.queueKey(() => this.sendCtl({ t: 'kd', c: modifier }));
-    this.queueKey(() => this.sendCtl({ t: 'kd', c: 'KeyV' }));
-    this.queueKey(() => this.sendCtl({ t: 'ku', c: 'KeyV' }));
-    this.queueKey(() => this.sendCtl({ t: 'ku', c: modifier }));
-  }
-
-  /** Arquivo copiado no Windows: fica disponivel para download, para o usuario salvar no Desktop do Mac. */
-  onFileReady({ transferId, name, size }) {
-    if (typeof transferId !== 'string') return;
-    this.pendingDownloads.push({ transferId, name: typeof name === 'string' ? name : 'arquivo', size: Number(size) || 0 });
-    // Compatibilidade com agentes antigos: como o botao avulso foi substituido pela pasta
-    // compartilhada, inicia o download legado imediatamente em vez de deixar um arquivo inacessivel.
-    this.downloadReadyFiles();
-    this.toast('Arquivo da máquina enviado ao navegador');
-  }
-
-  /** Confirmacao fim-a-fim: o agente gravou (ou nao conseguiu gravar) em recebimentos. */
-  onFileStatus({ transferId, delivered }) {
-    if (typeof transferId !== 'string') return;
-    this.pendingUploads.delete(transferId);
-    this.toast(delivered ? 'Arquivo recebido em recebimentos da máquina' : 'A máquina não conseguiu gravar o arquivo; veja o diagnóstico');
-  }
-
-  downloadReadyFiles() {
-    const items = this.pendingDownloads.splice(0);
-    for (const item of items) {
-      const a = document.createElement('a');
-      a.href = `/transfers/${encodeURIComponent(item.transferId)}`;
-      a.download = item.name;
-      a.click();
-    }
   }
 
   toast(text) {
@@ -883,8 +715,7 @@ export class Viewer {
 
   sharedRow(item) {
     const row = document.createElement('div'); row.className = 'vshared-row'; row.tabIndex = 0; row.setAttribute('role', 'option');
-    row.classList.toggle('folder', !!item.folder);
-    row.dataset.path = item.path;
+    row.classList.toggle('folder', !!item.folder); row.dataset.path = item.path;
     const icon = document.createElement('span'); icon.className = 'vshared-icon';
     icon.innerHTML = item.folder
       ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h7l2 2h9v10H3z"/><path d="M3 8.5h18"/></svg>'
@@ -897,17 +728,12 @@ export class Viewer {
     row.append(nameCell, type, size, modified);
     row.onclick = () => this.selectShared(item);
     row.ondblclick = () => item.folder ? this.navigateShared(item.path) : this.downloadShared(item);
-    row.onkeydown = (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); item.folder ? this.navigateShared(item.path) : this.downloadShared(item); }
-      if (e.key === ' ') { e.preventDefault(); this.selectShared(item); }
-    };
+    row.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); item.folder ? this.navigateShared(item.path) : this.downloadShared(item); } if (e.key === ' ') { e.preventDefault(); this.selectShared(item); } };
     return row;
   }
 
   navigateShared(path) { this.sharedCurrentPath = path || ''; this.sharedSelected = null; this.renderSharedFolder(); }
-  navigateSharedParent() {
-    const parts = (this.sharedCurrentPath || '').split('/').filter(Boolean); parts.pop(); this.navigateShared(parts.join('/'));
-  }
+  navigateSharedParent() { const parts = (this.sharedCurrentPath || '').split('/').filter(Boolean); parts.pop(); this.navigateShared(parts.join('/')); }
   selectShared(item) { this.sharedSelected = item; this.syncSharedSelection(); }
   syncSharedSelection() {
     for (const row of this.sharedList.querySelectorAll('.vshared-row')) {
@@ -919,11 +745,7 @@ export class Viewer {
     if (selected) this.sharedDownload.textContent = this.sharedSelected.folder ? 'Baixar ZIP' : 'Baixar';
   }
   downloadSharedSelection() { if (this.sharedSelected) this.downloadShared(this.sharedSelected); }
-  downloadShared(item) {
-    const a = document.createElement('a'); const endpoint = item.folder ? 'archive' : 'file';
-    a.href = `/shared/${endpoint}?clientId=${encodeURIComponent(this.client.id)}&path=${encodeURIComponent(item.path)}`;
-    a.download = item.name + (item.folder ? '.zip' : ''); a.click();
-  }
+  downloadShared(item) { const a = document.createElement('a'); const endpoint = item.folder ? 'archive' : 'file'; a.href = `/shared/${endpoint}?clientId=${encodeURIComponent(this.client.id)}&path=${encodeURIComponent(item.path)}`; a.download = item.name + (item.folder ? '.zip' : ''); a.click(); }
   async deleteSharedSelection() {
     const item = this.sharedSelected; if (!item) return;
     if (!confirm(`Excluir ${item.folder ? 'a pasta e todo o seu conteúdo' : 'o arquivo'} “${item.name}”?`)) return;
@@ -932,12 +754,7 @@ export class Viewer {
     this.sharedSelected = null; await this.refreshSharedFolder();
   }
   sharedFileType(name) { const dot = name.lastIndexOf('.'); return dot > 0 ? name.slice(dot + 1).toUpperCase() : 'Arquivo'; }
-  sharedFormatSize(bytes) {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-    return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
-  }
+  sharedFormatSize(bytes) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`; if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`; return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`; }
 
   async uploadSharedFiles(files, preserveFolders = false) {
     if (!this.client || !files?.length) return;
@@ -953,15 +770,11 @@ export class Viewer {
         const { file, path } = pending[cursor++];
         if (file.size > 512 * 1024 * 1024) { failed++; continue; }
         this.toast(`Enviando ${++completed} de ${pending.length}…`);
-        try {
-          const r = await fetch(`/shared/file?clientId=${encodeURIComponent(this.client.id)}&path=${encodeURIComponent(path)}`, { method: 'PUT', credentials: 'same-origin', body: file });
-          if (!r.ok) throw new Error();
-        } catch { failed++; }
+        try { const r = await fetch(`/shared/file?clientId=${encodeURIComponent(this.client.id)}&path=${encodeURIComponent(path)}`, { method: 'PUT', credentials: 'same-origin', body: file }); if (!r.ok) throw new Error(); } catch { failed++; }
       }
     };
     await Promise.all(Array.from({ length: Math.min(3, pending.length) }, worker));
-    if (failed) this.toast(`${failed} item(ns) não puderam ser enviados`);
-    else this.toast(`${pending.length} item(ns) adicionados à pasta compartilhada`);
+    if (failed) this.toast(`${failed} item(ns) não puderam ser enviados`); else this.toast(`${pending.length} item(ns) adicionados à pasta compartilhada`);
     await this.refreshSharedFolder();
   }
 
@@ -971,49 +784,18 @@ export class Viewer {
   }
 
   sendCtl(msg) {
-    let traceId = null;
-    if (CONFIRMED_INPUT_EVENTS.has(msg?.t) && this.sessionId && this.clientId) {
-      const seq = ++this.traceSequence;
-      const trace = `${this.sessionId}:${seq}`;
-      traceId = trace;
-      msg = { ...msg, q: seq, trace };
-    }
     if (this.mode === 'compat') {
       if (this.sessionId) {
-        const sent = this.sendHub({ type: 'cmd', sessionId: this.sessionId, data: msg });
-        return traceId || sent;
+        return this.sendHub({ type: 'cmd', sessionId: this.sessionId, data: msg });
       }
     } else if (this.ctl?.readyState === 'open') {
       this.ctl.send(JSON.stringify(msg));
-      return traceId || true;
+      return true;
     }
     return false;
   }
 
   onTelemetryAck() {}
-
-  onInputResult(data) {
-    if (typeof data?.trace !== 'string') return;
-    this.traceResults.set(data.trace, { result: data.result, at: Date.now() });
-    const waiter = this.inputWaiters.get(data.trace);
-    if (waiter) { this.inputWaiters.delete(data.trace); waiter(data.result); }
-    if (this.traceResults.size > 500) this.traceResults.delete(this.traceResults.keys().next().value);
-  }
-
-  waitInputResult(trace, timeoutMs) {
-    if (typeof trace !== 'string') return Promise.resolve('not-sent');
-    const known = this.traceResults.get(trace);
-    if (known) return Promise.resolve(known.result);
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => { this.inputWaiters.delete(trace); resolve('timeout'); }, timeoutMs);
-      timer.unref?.();
-      this.inputWaiters.set(trace, (result) => { clearTimeout(timer); resolve(result); });
-    });
-  }
-
-  recoverInputTraces() {
-    try { window.localStorage?.removeItem(TRACE_OUTBOX_KEY); } catch { /* armazenamento indisponivel */ }
-  }
 
   /** Pede ao agente para abandonar o WebRTC e usar o modo compativel (Java puro). */
   requestCompat() {
@@ -1169,10 +951,8 @@ export class Viewer {
     this.close(false);
     this.sessionId = sessionId;
     this.clientId = clientId || null;
-    this.recoverInputTraces();
     this.reportInputEnvironment();
     this.mode = 'rtc';
-    this.clipboardImageV1 = false;
     this.video.hidden = false;
     this.canvas.hidden = true;
     this.remoteSet = false;
@@ -1235,7 +1015,6 @@ export class Viewer {
     const pc = this.pc;
     if (!pc) return;
     if (data.type === 'mode' && data.mode === 'compat') {
-      this.clipboardImageV1 = data.clipboardImageV1 === true;
       this.switchToCompat(data.reason);
       return;
     }
@@ -1282,7 +1061,6 @@ export class Viewer {
     }
     if (m.t === 'screen') {
       this.remoteScreen = m;
-      this.clipboardImageV1 = m.clipboardImageV1 === true;
       if (!m.control) this.msg.textContent = 'Controle remoto desativado nesta máquina (somente visualização).';
     }
   }
@@ -1353,13 +1131,10 @@ export class Viewer {
     this.composing = false;
     this.compositionCommitted = false;
     this.textCapture.value = '';
-    this.pendingUploads.clear();
-    for (const resolve of this.inputWaiters.values()) resolve('session-closed');
-    this.inputWaiters.clear();
+    this.closeSharedFolder();
     this.clientId = null;
     this.client = null;
     this.settingsEl.hidden = true;
-    this.closeSharedFolder();
     this.kbEl.hidden = true;
     this.prev = null;
     if (notify && this.sessionId) this.sendHub({ type: 'session-close', sessionId: this.sessionId });

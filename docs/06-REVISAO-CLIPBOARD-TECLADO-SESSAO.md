@@ -354,7 +354,7 @@ teste dedicado ao fluxo de confirmação do toggle de modo serviço — ver abai
 
 | Arquivo | O que mudou |
 |---|---|
-| `hub/public/viewer.js` | `sendLocalClipboard` (toast de erro, chamada fora do queueKey), `keyHandler` (Set `pressedCodes`, keyup sempre repassado, `releaseAllKeys` em blur/visibilitychange), `close()` limpa `pressedCodes` |
+| `hub/public/viewer.js` | `keyHandler` lê somente texto do clipboard dentro do gesto de colar, envia-o antes de `Ctrl+V`, e mantém `pressedCodes`/`releaseAllKeys` para não travar modificadores |
 | `agent/src/com/transacao/agent/RemoteSession.java` + `AgentApp.java` | Clipboard recebido pelo canal de controle WebRTC é aplicado antes das teclas posteriores desse mesmo canal, preservando a ordem com Ctrl+V |
 | `agent/src/com/transacao/agent/LegacyServiceModeCleanup.java` | Migração de remoção: elimina o serviço/driver/certificado/Test Signing legados depois de confirmação UAC; não contém caminho de instalação |
 | `src/com/transacao/common/remote/InputInjector.java` | Novo `typeUnicodeWindows`/`ensureUnicodeHelper`/`closeUnicodeHelper` (SendInput+KEYEVENTF_UNICODE via helper PowerShell persistente); `typeAltNumpad` mantido só como fallback não-Windows |
@@ -373,37 +373,19 @@ de serviço/WinSW. Essa conclusão foi substituída pela atualização posterior
    reportado pelo usuário ainda, achado incidental durante a investigação do item 2.2 — baixa
    prioridade.
 
-## 6. Auditoria central correlacionada do acesso remoto (06/10/2026)
+## 6. Auditoria central do acesso remoto
 
-- O navegador atribui `sessionId + sequência + trace` a rolagem, clique, comandos físicos de tecla,
-  texto Unicode e clipboard. Antes do envio, grava uma versão sanitizada numa outbox do navegador;
-  uma reconexão/F5 reenvia ao hub apenas os metadados ainda não confirmados.
-- O hub persiste em `data/access-logs/<clientId>.jsonl`: abertura/fechamento da sessão, evento observado,
-  encaminhamento no modo compatível e aplicação/rejeição confirmada pelo agente. WebRTC não ganha uma
-  fase artificial de encaminhamento pelo hub, pois o controle segue direto pelo data channel.
-- O agente mantém resultados pendentes até receber `input-result-ack`; os logs técnicos gerais usam
-  `agent-log-ack`. O hub elimina reenvios duplicados por ID/trace, inclusive depois de recarregar os
-  arquivos existentes.
+- O hub persiste eventos técnicos de sessão e diagnósticos em `data/access-logs/<clientId>.jsonl`.
+  O controle em WebRTC segue diretamente pelo data channel, sem confirmação adicional por comando.
+- Os logs técnicos gerais usam `agent-log-ack`; o hub elimina reenvios duplicados por ID.
 - Conteúdo digitado, texto do clipboard, nomes/caminhos de arquivos e coordenadas nunca entram nessa
   auditoria. Ficam apenas categoria do evento, código físico quando necessário para diagnóstico de
   layout, modificadores implícitos no próprio fluxo, contagem de caracteres, transporte e resultado.
-- Há regressões automatizadas que correlacionam `observed -> forwarded -> applied`, simulam reenvio com
-  confirmação perdida e procuram deliberadamente um texto secreto no JSONL para garantir que ele não
-  foi persistido.
+- Há regressões que verificam que conteúdo sensível não é persistido no JSONL.
 
-## 7. Imagem copiada pelo operador para o clipboard remoto (06/10/2026)
+## 7. Clipboard remoto: somente texto (13/10/2026)
 
-- Ao colar dentro do visualizador, Safari e navegadores Chromium são consultados por
-  `ClipboardEvent.clipboardData.files` e também por `clipboardData.items`. Uma captura PNG é enviada
-  ao clipboard da máquina acessada e o Ctrl/Cmd+V remoto só é emitido depois da confirmação do agente.
-- O protocolo é negociado por `clipboardImageV1`. Agentes antigos não recebem comandos desconhecidos:
-  preservam o comportamento anterior, no qual a imagem colada segue como arquivo para `recebimentos`.
-- Em WebRTC, metadados e bytes PNG usam o mesmo data channel confiável e ordenado do teclado. No modo
-  compatível, o navegador faz upload autenticado de um blob temporário no hub e o agente o consome em
-  memória uma única vez; blobs abandonados expiram em cinco minutos.
-- O agente valida limite de 25 MB, assinatura PNG, dimensões antes da decodificação (máximo de 40
-  milhões de pixels) e SHA-256. Pixels não são gravados em arquivo nem em log. A auditoria central
-  registra apenas tamanho, transporte e resultado correlacionado.
-- Restrição de navegador: a página não monitora silenciosamente o clipboard. No Safari, a leitura é
-  acionada pelo gesto de colar (`Cmd+V`) dentro do acesso remoto; capturar a tela sem depois colar não
-  dispara envio automático.
+- A sincronização é bidirecional exclusivamente para texto. Ao usar `Ctrl/Cmd+V`, o navegador lê o
+  texto durante o gesto do usuário, envia-o pelo mesmo canal ordenado e só então encaminha as teclas.
+- Imagens e arquivos não são observados nem interceptados pelo visualizador. Arquivos só são geridos
+  pela Pasta compartilhada, fora do clipboard.

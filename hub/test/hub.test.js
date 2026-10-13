@@ -99,55 +99,6 @@ test('operador autenticado recebe ticket LAN descartavel; o ticket nao e segredo
   op.close(); hub.close();
 });
 
-test('clipboard de imagem no modo compativel usa transferencia temporaria e comando correlacionado', async () => {
-  const { hub, base } = await setup();
-  const http = base.replace(/^ws/, 'http');
-  const op = await connect(`${base}/operator`);
-  const id = randomUUID(); const token = randomBytes(32).toString('base64url');
-  const agent = new WebSocket(`${base}/agent`, { headers: agentHeaders(id, token) });
-  const pending = next(agent, (m) => m.type === 'pending');
-  await new Promise((resolve) => agent.once('open', resolve));
-  await pending;
-  const settings = next(agent, (m) => m.type === 'settings');
-  op.send(JSON.stringify({ type: 'approve-client', clientId: id }));
-  await settings;
-  const ready = next(op, (m) => m.type === 'session-ready');
-  op.send(JSON.stringify({ type: 'session-open', clientId: id }));
-  const { sessionId } = await ready;
-
-  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  const uploaded = await fetch(`${http}/transfers/upload`, {
-    method: 'POST',
-    headers: { cookie: operatorCookie, 'x-transfer-session': sessionId, 'x-transfer-name': 'clipboard.png', 'x-transfer-kind': 'clipboard-image' },
-    body: png,
-  });
-  assert.equal(uploaded.status, 201);
-  const receipt = await uploaded.json();
-  assert.equal(receipt.size, png.length);
-
-  const trace = `${sessionId}:9`;
-  const command = next(agent, (m) => m.type === 'cmd' && m.data?.trace === trace);
-  op.send(JSON.stringify({ type: 'cmd', sessionId, data: {
-    t: 'clip-image', transferId: receipt.id, size: png.length, sha256: '0'.repeat(64), q: 9, trace,
-  } }));
-  const forwarded = await command;
-  assert.equal(forwarded.data.transferId, receipt.id);
-  assert.equal(forwarded.data.size, png.length);
-
-  const downloaded = await fetch(`${http}/transfers/${receipt.id}`, { headers: agentHeaders(id, token) });
-  assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), png);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal((await fetch(`${http}/transfers/${receipt.id}`, { headers: agentHeaders(id, token) })).status, 404,
-    'imagem temporaria e removida depois do primeiro download');
-
-  const result = next(op, (m) => m.type === 'input-result' && m.data?.trace === trace);
-  agent.send(JSON.stringify({ type: 'status', event: 'input-result', data: {
-    sessionId, trace, seq: 9, command: 'clip-image', transport: 'compat', result: 'applied',
-  } }));
-  assert.equal((await result).data.result, 'applied');
-  agent.close(); op.close(); hub.close();
-});
-
 test('pasta compartilhada: preserva subpastas, baixa pasta em ZIP e remove arvore sem sair da raiz', async () => {
   const { hub, base } = await setup();
   const http = base.replace(/^ws/, 'http');
@@ -240,7 +191,7 @@ test('registro automatico, aprovacao, configuracao e sinalizacao', async () => {
   hub.close();
 });
 
-test('comandos nao geram auditoria e confirmacoes funcionais continuam chegando', async () => {
+test('comandos nao geram auditoria', async () => {
   const { hub, base } = await setup();
   const op = await connect(`${base}/operator`);
   const id = randomUUID(); const token = randomBytes(32).toString('base64url');
@@ -254,20 +205,6 @@ test('comandos nao geram auditoria e confirmacoes funcionais continuam chegando'
   const ready = next(op, (m) => m.type === 'session-ready');
   op.send(JSON.stringify({ type: 'session-open', clientId: id }));
   const { sessionId } = await ready;
-  const trace = `${sessionId}:1`;
-
-  const command = next(agent, (m) => m.type === 'cmd' && m.data?.trace === trace);
-  op.send(JSON.stringify({ type: 'cmd', sessionId, data: { t: 'clip-image', q: 1, trace, transferId: 'arquivo', size: 10 } }));
-  assert.equal((await command).data.q, 1);
-
-  const agentAck = next(agent, (m) => m.type === 'input-result-ack' && m.trace === trace);
-  const result = next(op, (m) => m.type === 'input-result' && m.data?.trace === trace);
-  agent.send(JSON.stringify({ type: 'status', event: 'input-result', data: {
-    sessionId, trace, seq: 1, command: 'clip-image', transport: 'compat', result: 'applied',
-  } }));
-  await agentAck;
-  assert.equal((await result).data.result, 'applied');
-
   const logId = randomUUID();
   let logAck = next(agent, (m) => m.type === 'agent-log-ack' && m.id === logId);
   const centralLog = { type: 'status', event: 'agent-log', data: { id: logId, code: 'connection', level: 'warn', detail: 'reconexao tecnica' } };

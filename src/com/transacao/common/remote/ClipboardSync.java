@@ -35,12 +35,13 @@ public class ClipboardSync implements FlavorListener {
     public interface Sender {
         void sendText(String text);
 
-        void sendFiles(byte[] zipBytes);
+        default void sendFiles(byte[] zipBytes) { }
     }
 
     private final Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
     private final Sender sender;
     private final File receivedDir;
+    private final boolean syncFiles;
     private volatile String lastKnownText;
     private volatile String lastKnownFilesFingerprint;
     private volatile boolean applyingRemoteChange = false;
@@ -49,8 +50,14 @@ public class ClipboardSync implements FlavorListener {
     private final Thread pollThread;
 
     public ClipboardSync(Sender sender, File receivedDir) {
+        this(sender, receivedDir, true);
+    }
+
+    /** Permite ao acesso remoto moderno sincronizar somente texto. */
+    public ClipboardSync(Sender sender, File receivedDir, boolean syncFiles) {
         this.sender = sender;
         this.receivedDir = receivedDir;
+        this.syncFiles = syncFiles;
 
         // Inicializa o estado conhecido para nao reenviar o conteudo que ja estava no clipboard
         initCurrentState();
@@ -125,6 +132,7 @@ public class ClipboardSync implements FlavorListener {
             // caminho), o que faria ela ser tratada como texto em vez de
             // arquivo se checassemos texto primeiro.
             if (t.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                if (!syncFiles) return;
                 @SuppressWarnings("unchecked")
                 List<File> files = (List<File>) t.getTransferData(DataFlavor.javaFileListFlavor);
                 String fingerprint = computeFilesFingerprint(files);

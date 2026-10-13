@@ -104,8 +104,6 @@ public final class AgentApp {
     private final Object injectorLock = new Object();
     private final Object logLock = new Object();
     private final Map<String, Map<String, Object>> pendingCentralLogs = new ConcurrentHashMap<>();
-    /** Resultados ficam pendentes ate o hub confirmar persistencia; reconexao nao cria lacunas. */
-    private final Map<String, Map<String, Object>> pendingInputResults = new ConcurrentHashMap<>();
     /** Evita reenviar continuamente a mesma falha para o hub. */
     private final Map<String, Long> lastCentralLogAt = new ConcurrentHashMap<>();
     /** Evita que falhas identicas encham stdout/agent.log em loops de reconexao. */
@@ -217,7 +215,6 @@ public final class AgentApp {
                 setStatus("Conectado");
                 sendHello();
                 flushCentralLogs();
-                flushInputResults();
                 reportRollbackIfAny();
             }
 
@@ -318,30 +315,7 @@ public final class AgentApp {
                     break;
                 }
                 if ("clip".equals(Json.str(data, "t"))) {
-                    String result = "applied";
-                    try {
-                        applyRemoteClipboard(Json.str(data, "text"));
-                    } catch (RuntimeException e) {
-                        result = "error";
-                    }
-                    reportInputResult(s.id, "compat", (long) Json.num(data, "q", 0),
-                            Json.str(data, "trace"), "clip", result);
-                } else if ("clip-image".equals(Json.str(data, "t"))) {
-                    long seq = (long) Json.num(data, "q", 0);
-                    String trace = Json.str(data, "trace");
-                    String imageTransferId = Json.str(data, "transferId");
-                    long imageSize = (long) Json.num(data, "size", 0);
-                    String imageSha = Json.str(data, "sha256");
-                    worker.execute(() -> {
-                        String result = "rejected";
-                        try {
-                            byte[] png = FileTransfer.downloadBytes(cfg, imageTransferId, imageSize, ClipboardImage.MAX_BYTES);
-                            if (settings.clipboardSync && ClipboardImage.apply(png, imageSha)) result = "applied";
-                        } catch (Exception e) {
-                            log("Falha tecnica ao aplicar imagem remota no clipboard.");
-                        }
-                        reportInputResult(s.id, "compat", seq, trace, "clip-image", result);
-                    });
+                    applyRemoteClipboard(Json.str(data, "text"));
                 } else if ("use-compat".equals(Json.str(data, "t"))) {
                     worker.execute(() -> fallbackToCompat(s, "pedido do operador"));
                 } else if ("latency-ping".equals(Json.str(data, "t")) && s.compat != null) {
@@ -349,11 +323,6 @@ public final class AgentApp {
                 } else if (s.compat != null) {
                     s.compat.onCommand(data);
                 }
-                break;
-            }
-            case "input-result-ack": {
-                String trace = Json.str(m, "trace");
-                if (trace != null) pendingInputResults.remove(trace);
                 break;
             }
             case "agent-log-ack": {
@@ -396,8 +365,7 @@ public final class AgentApp {
                 }
             }
             RemoteSession r = new RemoteSession(id, ice, factory, screen, settings, this::injector, this::applyRemoteClipboard,
-                    this::applyRemoteClipboardImage, data -> sendRtc(id, data), this::log,
-                    (seq, trace, command, result) -> reportInputResult(id, "webrtc", seq, trace, command, result),
+                    data -> sendRtc(id, data), this::log,
                     worker, () -> fallbackToCompat(s, "o WebRTC nao conseguiu conectar"));
             s.rtc = r;
             r.start();
@@ -427,8 +395,7 @@ public final class AgentApp {
             if (s.closed || s.compat != null) {
                 return;
             }
-            c = new CompatSession(s.id, settings, this::injector, hub::sendBinary, this::log,
-                    (seq, trace, command, result) -> reportInputResult(s.id, "compat", seq, trace, command, result));
+            c = new CompatSession(s.id, settings, this::injector, hub::sendBinary, this::log);
             s.compat = c;
         }
         log("Sessao " + s.id.substring(0, 8) + ": usando o modo compativel porque " + reason + ".");
@@ -445,7 +412,6 @@ public final class AgentApp {
         mode.put("type", "mode");
         mode.put("mode", "compat");
         mode.put("reason", reason);
-        mode.put("clipboardImageV1", true);
         sendRtc(s.id, mode); // o visualizador troca para o desenho dos blocos antes dos primeiros frames
         try {
             c.start();
@@ -533,8 +499,6 @@ public final class AgentApp {
         synchronized (clipboardLock) {
             boolean want = settings.clipboardSync && !sessions.isEmpty();
             if (want && clipboard == null) {
-                // Sem pasta de recebidos configuravel: o destino dos arquivos sera a pasta em que o usuario
-                // esta trabalhando (futuro); esta pasta e so area de preparo interna do ClipboardSync.
                 File dir = new File(cfg.dir, "staging");
                 try {
                     ClipboardSync sync = new ClipboardSync(new ClipboardSync.Sender() {
@@ -557,13 +521,7 @@ public final class AgentApp {
                             }
                         }
 
-                        @Override
-                        public void sendFiles(byte[] zipBytes) {
-                            for (Session s : sessions.values()) {
-                                worker.execute(() -> FileTransfer.upload(cfg, s.id, zipBytes, AgentApp.this::log));
-                            }
-                        }
-                    }, dir);
+                    }, dir, false);
                     sync.setErrorListener(this::log);
                     clipboard = sync;
                     log("Sincronizacao da area de transferencia (texto) ativa.");
@@ -587,10 +545,6 @@ public final class AgentApp {
                 clipboard.applyRemoteText(text);
             }
         }
-    }
-
-    private boolean applyRemoteClipboardImage(byte[] png, String sha256) {
-        return settings.clipboardSync && ClipboardImage.apply(png, sha256);
     }
 
     /**
@@ -635,27 +589,6 @@ public final class AgentApp {
         data.put("transferId", transferId);
         data.put("delivered", delivered);
         reportEvent("file-delivery", data);
-    }
-
-    /** Confirma apenas a imagem de clipboard, unico controle que aguarda resultado fim a fim. */
-    private void reportInputResult(String sessionId, String transport, long seq, String trace,
-                                   String command, String result) {
-        if (!"clip-image".equals(command) && !"clip-image-start".equals(command)) return;
-        if (hub == null || sessionId == null || trace == null || seq <= 0) return;
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("sessionId", sessionId); data.put("transport", transport);
-        data.put("seq", seq); data.put("trace", trace); data.put("command", command); data.put("result", result);
-        Map<String, Object> msg = new LinkedHashMap<>();
-        msg.put("type", "status"); msg.put("event", "input-result"); msg.put("data", data);
-        pendingInputResults.put(trace, msg);
-        hub.send(msg); // so sai da fila quando o hub responder input-result-ack
-    }
-
-    private void flushInputResults() {
-        if (hub == null) return;
-        for (Map<String, Object> msg : pendingInputResults.values()) {
-            if (!hub.send(msg)) return;
-        }
     }
 
     /** Se uma atualizacao foi desfeita (a nova nao subiu), avisa o painel uma vez. */

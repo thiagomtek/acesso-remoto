@@ -614,95 +614,14 @@ test('pasta compartilhada substitui botoes avulsos e envia arquivos pelo modal',
   v.close(false);
 });
 
-test('arquivos: Ctrl/Cmd+V de um arquivo usa o ClipboardEvent e nao cola V na maquina remota', async () => {
-  const calls = [];
-  const previousFetch = globalThis.fetch;
-  globalThis.fetch = async (url, opts) => {
-    calls.push({ url, opts });
-    return { ok: true, status: 201, json: async () => ({ id: 'upload-1' }) };
-  };
-  const { v, sent } = openTouchViewer();
+test('arquivos: arrastar e soltar na tela remota nao inicia transferencia', () => {
+  const { v } = openTouchViewer();
   v.setClient(client());
-  Object.defineProperty(globalThis, 'navigator', { value: { platform: 'Win32', clipboard: { readText: async () => 'nao deve ir' } }, configurable: true });
-  v.stage.focus();
-  const key = (type, code, extra = {}) => window.dispatchEvent(new window.KeyboardEvent(type, {
-    code, key: extra.key ?? code, bubbles: true, cancelable: true, ...extra,
-  }));
-  key('keydown', 'ControlLeft', { key: 'Control', ctrlKey: true });
-  key('keydown', 'KeyV', { key: 'v', ctrlKey: true });
-  const file = new window.File(['arquivo'], 'copiado.txt', { type: 'text/plain' });
-  const paste = new window.Event('paste', { bubbles: true, cancelable: true });
-  Object.defineProperty(paste, 'clipboardData', { value: { files: [file] } });
-  window.dispatchEvent(paste);
-  key('keyup', 'KeyV', { key: 'v', ctrlKey: true });
-  key('keyup', 'ControlLeft', { key: 'Control' });
-  await sleep(0);
-  await v.keyChain;
-  assert.equal(paste.defaultPrevented, true);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].opts.headers['x-transfer-name'], 'copiado.txt');
-  assert.deepEqual(cmds(sent).filter((d) => d.t === 'kd' || d.t === 'ku').map(({ t, c }) => ({ t, c })), [
-    { t: 'kd', c: 'ControlLeft' }, { t: 'ku', c: 'ControlLeft' },
-  ], 'o V nao chega a maquina remota quando o ClipboardEvent confirmou um arquivo');
-  globalThis.fetch = previousFetch;
-  v.close(false);
-});
-
-test('clipboard de imagem: compatibilidade envia blob temporario e so cola depois da confirmacao do agente', async () => {
-  const calls = [];
-  const previousFetch = globalThis.fetch;
-  globalThis.fetch = async (url, opts) => {
-    calls.push({ url, opts });
-    return { ok: true, status: 201, json: async () => ({ id: '11111111-1111-1111-1111-111111111111', size: 8 }) };
-  };
-  const { v, sent } = openTouchViewer();
-  v.setClient(client());
-  v.clipboardImageV1 = true;
-  v.waitInputResult = async () => 'applied';
-  const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  const image = { type: 'image/png', size: bytes.length, arrayBuffer: async () => bytes.buffer };
-
-  assert.equal(await v.sendClipboardImage(image, true), true);
-  await v.keyChain;
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, '/transfers/upload');
-  assert.equal(calls[0].opts.headers['x-transfer-kind'], 'clipboard-image');
-  const commands = cmds(sent);
-  const imageCommand = commands.find((d) => d.t === 'clip-image');
-  assert.equal(imageCommand.transferId, '11111111-1111-1111-1111-111111111111');
-  assert.equal(imageCommand.size, 8);
-  assert.match(imageCommand.sha256, /^[a-f0-9]{64}$/);
-  assert.deepEqual(commands.filter((d) => d.t === 'kd' || d.t === 'ku').map(({ t, c }) => ({ t, c })), [
-    { t: 'kd', c: 'ControlLeft' }, { t: 'kd', c: 'KeyV' },
-    { t: 'ku', c: 'KeyV' }, { t: 'ku', c: 'ControlLeft' },
-  ]);
-  globalThis.fetch = previousFetch;
-  v.close(false);
-});
-
-test('clipboard de imagem: WebRTC envia inicio JSON e bytes pelo canal confiavel ordenado', async () => {
-  const hub = [];
-  const control = [];
-  const v = new Viewer({ send: (m) => hub.push(m), isAdmin: () => true, onClosed: () => {} });
-  v.open({ sessionId: 's-image', clientId: 'c1', name: 'X', iceServers: [] });
-  v.setClient(client());
-  v.clipboardImageV1 = true;
-  v.waitInputResult = async () => 'applied';
-  v.ctl = {
-    readyState: 'open', bufferedAmount: 0,
-    send: (value) => control.push(typeof value === 'string' ? JSON.parse(value) : new Uint8Array(value)),
-    close() {},
-  };
-  const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
-  const image = { type: 'image/png', size: bytes.length, arrayBuffer: async () => bytes.buffer };
-
-  assert.equal(await v.sendClipboardImage(image, false), true);
-  assert.equal(control[0].t, 'clip-image-start');
-  assert.equal(control[0].size, bytes.length);
-  assert.match(control[0].sha256, /^[a-f0-9]{64}$/);
-  assert.deepEqual([...control[1]], [...bytes]);
-  assert.equal(hub.some((m) => m.type === 'cmd' && m.data?.t === 'clip-image-start'), false,
-    'payload WebRTC nao percorre o relay de comandos do hub');
+  const drop = new window.Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperty(drop, 'dataTransfer', { value: { files: [new window.File(['x'], 'teste.txt')] } });
+  v.stage.dispatchEvent(drop);
+  assert.equal(typeof v.uploadFiles, 'undefined');
+  assert.equal(drop.defaultPrevented, false);
   v.close(false);
 });
 
