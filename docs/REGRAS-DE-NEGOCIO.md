@@ -29,7 +29,7 @@ Legenda: **Client** = Java na máquina remota · **Hub** = serviço em Node · *
 ## Área de transferência
 | Regra atual | Onde vive agora |
 |---|---|
-| Sincroniza **texto e arquivos** nos dois sentidos | Canal de dados WebRTC |
+| Sincroniza **somente texto** nos dois sentidos | Canal de dados WebRTC |
 | Pode ser **habilitada/desabilitada** para os clients | Configuração por máquina (`clipboardSync`) |
 
 ## Transferência de arquivos

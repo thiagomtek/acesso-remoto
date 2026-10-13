@@ -525,10 +525,16 @@ test('area de transferencia: colar envia o texto local ANTES do Ctrl+V; Cmd vira
   await v.onRtc({ type: 'clip', text: 'copiado la' });
   assert.deepEqual(written, ['copiado la']);
 
+  // imagem/arquivo copiado na maquina remota nao atravessa o clipboard, mas
+  // invalida o texto antigo para ele nao ser colado por engano depois.
+  await v.onRtc({ type: 'clip-clear' });
+  assert.deepEqual(written, ['copiado la', '']);
+
   // configuracao da maquina desliga a sincronizacao: nada entra nem sai
   v.setClient(client({ clipboardSync: false }));
   await v.onRtc({ type: 'clip', text: 'ignorado' });
-  assert.deepEqual(written, ['copiado la']);
+  await v.onRtc({ type: 'clip-clear' });
+  assert.deepEqual(written, ['copiado la', '']);
   sent.length = 0;
   key('keydown', 'KeyV', { key: 'v', ctrlKey: true });
   await v.keyChain;
@@ -566,6 +572,8 @@ test('area de transferencia: no WebRTC, texto e Ctrl+V usam o mesmo canal ordena
   assert.equal(hub.some((m) => m.data?.t === 'clip'), false, 'clipboard nao pode correr pelo hub em paralelo');
   await v.onCtl({ t: 'clip', text: 'texto remoto' });
   assert.deepEqual(written, ['texto remoto'], 'clip recebido pelo data channel WebRTC vai para a area local');
+  await v.onCtl({ t: 'clip-clear' });
+  assert.deepEqual(written, ['texto remoto', ''], 'conteudo nao textual limpa apenas o texto antigo local');
   v.close(false);
 });
 

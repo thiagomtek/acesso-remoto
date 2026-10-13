@@ -36,6 +36,13 @@ public class ClipboardSync implements FlavorListener {
         void sendText(String text);
 
         default void sendFiles(byte[] zipBytes) { }
+
+        /**
+         * O conteudo atual nao e texto. O acesso remoto moderno usa este aviso
+         * para remover texto antigo do outro lado, sem transportar imagem ou
+         * arquivo pelo clipboard.
+         */
+        default void clearText() { }
     }
 
     private final Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
@@ -44,6 +51,7 @@ public class ClipboardSync implements FlavorListener {
     private final boolean syncFiles;
     private volatile String lastKnownText;
     private volatile String lastKnownFilesFingerprint;
+    private volatile String lastKnownNonTextFingerprint;
     private volatile boolean applyingRemoteChange = false;
     private volatile boolean running = true;
     private volatile Consumer<String> errorListener;
@@ -73,12 +81,17 @@ public class ClipboardSync implements FlavorListener {
         try {
             Transferable t = clipboard.getContents(null);
             if (t != null) {
-                if (t.isDataFlavorSupported(DataFlavor.stringFlavor)) {
-                    lastKnownText = (String) t.getTransferData(DataFlavor.stringFlavor);
-                } else if (t.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                if (t.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
                     @SuppressWarnings("unchecked")
                     List<File> files = (List<File>) t.getTransferData(DataFlavor.javaFileListFlavor);
                     lastKnownFilesFingerprint = computeFilesFingerprint(files);
+                    if (!syncFiles) {
+                        lastKnownNonTextFingerprint = computeNonTextFingerprint(t);
+                    }
+                } else if (isNonText(t)) {
+                    lastKnownNonTextFingerprint = computeNonTextFingerprint(t);
+                } else if (t.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+                    lastKnownText = (String) t.getTransferData(DataFlavor.stringFlavor);
                 }
             }
         } catch (Exception ignored) {
@@ -100,7 +113,9 @@ public class ClipboardSync implements FlavorListener {
 
     @Override
     public void flavorsChanged(FlavorEvent e) {
-        checkLocalClipboard();
+        // Cada novo Ctrl+C de imagem/arquivo deve invalidar o texto remoto
+        // anterior, inclusive quando os tipos de dados sao os mesmos.
+        checkLocalClipboard(true);
     }
 
     private void pollLoop() {
@@ -114,11 +129,11 @@ public class ClipboardSync implements FlavorListener {
             if (!running) {
                 break;
             }
-            checkLocalClipboard();
+            checkLocalClipboard(false);
         }
     }
 
-    private synchronized void checkLocalClipboard() {
+    private synchronized void checkLocalClipboard(boolean forceNonTextNotification) {
         if (applyingRemoteChange) {
             return;
         }
@@ -132,23 +147,28 @@ public class ClipboardSync implements FlavorListener {
             // caminho), o que faria ela ser tratada como texto em vez de
             // arquivo se checassemos texto primeiro.
             if (t.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
-                if (!syncFiles) return;
                 @SuppressWarnings("unchecked")
                 List<File> files = (List<File>) t.getTransferData(DataFlavor.javaFileListFlavor);
                 String fingerprint = computeFilesFingerprint(files);
-                if (fingerprint != null && !fingerprint.equals(lastKnownFilesFingerprint)) {
+                if (!syncFiles) {
+                    notifyNonText(t, forceNonTextNotification);
+                } else if (fingerprint != null && !fingerprint.equals(lastKnownFilesFingerprint)) {
                     lastKnownFilesFingerprint = fingerprint;
                     lastKnownText = null;
+                    lastKnownNonTextFingerprint = null;
                     byte[] zip = zipFiles(files);
                     if (zip != null) {
                         sender.sendFiles(zip);
                     }
                 }
+            } else if (isNonText(t)) {
+                notifyNonText(t, forceNonTextNotification);
             } else if (t.isDataFlavorSupported(DataFlavor.stringFlavor)) {
                 String text = (String) t.getTransferData(DataFlavor.stringFlavor);
                 if (text != null && !text.isEmpty() && !text.equals(lastKnownText)) {
                     lastKnownText = text;
                     lastKnownFilesFingerprint = null;
+                    lastKnownNonTextFingerprint = null;
                     sender.sendText(text);
                 }
             }
@@ -167,6 +187,7 @@ public class ClipboardSync implements FlavorListener {
         try {
             lastKnownText = text;
             lastKnownFilesFingerprint = null;
+            lastKnownNonTextFingerprint = null;
             clipboard.setContents(new StringSelection(text), null);
         } finally {
             try {
@@ -185,6 +206,7 @@ public class ClipboardSync implements FlavorListener {
             List<File> extracted = unzip(zipBytes, targetDir);
             lastKnownFilesFingerprint = computeFilesFingerprint(extracted);
             lastKnownText = null;
+            lastKnownNonTextFingerprint = null;
             clipboard.setContents(new FileListTransferable(extracted), null);
         } catch (IOException ignored) {
         } finally {
@@ -205,6 +227,32 @@ public class ClipboardSync implements FlavorListener {
             sb.append(f.getAbsolutePath()).append(':').append(f.length()).append(':').append(f.lastModified()).append(';');
         }
         return sb.toString();
+    }
+
+    private boolean isNonText(Transferable transferable) {
+        // Uma imagem pode tambem anunciar stringFlavor (por exemplo, alguns
+        // editores colocam uma descricao junto), mas imagem deve prevalecer:
+        // nao podemos deixar texto antigo passar como se fosse o print.
+        return transferable.isDataFlavorSupported(DataFlavor.imageFlavor)
+                || !transferable.isDataFlavorSupported(DataFlavor.stringFlavor);
+    }
+
+    private String computeNonTextFingerprint(Transferable transferable) {
+        StringBuilder fingerprint = new StringBuilder();
+        for (DataFlavor flavor : transferable.getTransferDataFlavors()) {
+            fingerprint.append(flavor.getMimeType()).append(';');
+        }
+        return fingerprint.toString();
+    }
+
+    private void notifyNonText(Transferable transferable, boolean force) {
+        String fingerprint = computeNonTextFingerprint(transferable);
+        if (force || !fingerprint.equals(lastKnownNonTextFingerprint)) {
+            lastKnownNonTextFingerprint = fingerprint;
+            lastKnownText = null;
+            lastKnownFilesFingerprint = null;
+            sender.clearText();
+        }
     }
 
     private byte[] zipFiles(List<File> files) throws IOException {

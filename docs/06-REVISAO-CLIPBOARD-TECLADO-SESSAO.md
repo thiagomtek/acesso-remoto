@@ -387,5 +387,8 @@ de serviço/WinSW. Essa conclusão foi substituída pela atualização posterior
 
 - A sincronização é bidirecional exclusivamente para texto. Ao usar `Ctrl/Cmd+V`, o navegador lê o
   texto durante o gesto do usuário, envia-o pelo mesmo canal ordenado e só então encaminha as teclas.
-- Imagens e arquivos não são observados nem interceptados pelo visualizador. Arquivos só são geridos
-  pela Pasta compartilhada, fora do clipboard.
+- Ao copiar imagem, arquivo ou outro conteúdo não textual na máquina remota, o agente avisa o
+  visualizador apenas para descartar texto local antigo; nenhum conteúdo não textual é transferido.
+  Assim o `Ctrl+V` seguinte executado na máquina remota usa o conteúdo dela, sem reaproveitar um
+  texto antigo do computador operador. Arquivos só são geridos pela Pasta compartilhada, fora do
+  clipboard.

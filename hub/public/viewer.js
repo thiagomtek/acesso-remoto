@@ -579,6 +579,19 @@ export class Viewer {
     }
   }
 
+  /** A maquina remota copiou imagem/arquivo; nao reutiliza texto local antigo. */
+  async onClipboardNonText() {
+    if (this.client?.settings?.clipboardSync === false) return;
+    try {
+      // Nao transportamos imagem nem arquivo: apagamos somente a entrada de
+      // texto local para que um Ctrl+V posterior nao cole texto obsoleto.
+      await navigator.clipboard.writeText('');
+      this.toast('A máquina remota copiou conteúdo não textual');
+    } catch {
+      this.toast('A máquina remota copiou conteúdo não textual (permita o acesso à área de transferência)');
+    }
+  }
+
   /** Detecta a plataforma localmente para mapear atalhos, sem enviar telemetria ao hub. */
   reportInputEnvironment() {
     const ua = navigator.userAgent || '';
@@ -1012,6 +1025,10 @@ export class Viewer {
       await this.onClip(data.text);
       return;
     }
+    if (data.type === 'clip-clear') {
+      await this.onClipboardNonText();
+      return;
+    }
     const pc = this.pc;
     if (!pc) return;
     if (data.type === 'mode' && data.mode === 'compat') {
@@ -1057,6 +1074,10 @@ export class Viewer {
   async onCtl(m) {
     if (m.t === 'clip') { // WebRTC: area de transferencia chega pelo mesmo canal da sessao
       await this.onClip(m.text);
+      return;
+    }
+    if (m.t === 'clip-clear') {
+      await this.onClipboardNonText();
       return;
     }
     if (m.t === 'screen') {

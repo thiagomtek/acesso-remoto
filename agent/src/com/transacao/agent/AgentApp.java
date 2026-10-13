@@ -509,18 +509,18 @@ public final class AgentApp {
                             }
                             Map<String, Object> d = new LinkedHashMap<>();
                             d.put("type", "clip");
+                            d.put("t", "clip");
                             d.put("text", text);
-                            for (Session s : sessions.values()) {
-                                // Se a sessao esta em WebRTC, o clipboard percorre o proprio canal
-                                // de controle confiavel/ordenado. O hub fica exclusivamente para o
-                                // modo compativel (ou como fallback enquanto o WebRTC negocia).
-                                RemoteSession r = s.rtc;
-                                if (r == null || !r.sendCtl(d)) {
-                                    sendRtc(s.id, d);
-                                }
-                            }
+                            sendClipboardNotification(d);
                         }
 
+                        @Override
+                        public void clearText() {
+                            Map<String, Object> d = new LinkedHashMap<>();
+                            d.put("type", "clip-clear");
+                            d.put("t", "clip-clear");
+                            sendClipboardNotification(d);
+                        }
                     }, dir, false);
                     sync.setErrorListener(this::log);
                     clipboard = sync;
@@ -532,6 +532,19 @@ public final class AgentApp {
                 clipboard.stop();
                 clipboard = null;
                 log("Sincronizacao da area de transferencia parada.");
+            }
+        }
+    }
+
+    /** Envia eventos de clipboard pelo mesmo canal ordenado dos atalhos. */
+    private void sendClipboardNotification(Map<String, Object> data) {
+        for (Session s : sessions.values()) {
+            // O campo "t" atende ao data channel WebRTC e "type" ao relay
+            // pelo hub/compatibilidade. Assim o texto chega antes do Ctrl+V
+            // em ambos os transportes.
+            RemoteSession r = s.rtc;
+            if (r == null || !r.sendCtl(data)) {
+                sendRtc(s.id, data);
             }
         }
     }
