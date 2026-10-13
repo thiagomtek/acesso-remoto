@@ -94,19 +94,24 @@ export function mountTeamsUi(teams, root = document.body) {
   q('teams-idle').onchange = (e) => teams.setPrefs({ idleCheck: e.target.checked });
   q('teams-away').onchange = (e) => teams.setPrefs({ awayMinutes: Math.max(1, Math.min(240, Number(e.target.value) || 5)) });
   q('teams-test').onclick = async () => {
-    const unlocked = await teams.audio.unlock();
-    if (!unlocked) teams.log('O navegador bloqueou o audio. Verifique se esta aba/site nao esta silenciado.');
+    try {
+      const unlocked = await teams.audio.unlock();
+      if (!unlocked && !teams.audio.ready) teams.log('O navegador bloqueou o audio. Verifique se esta aba/site nao esta silenciado.');
+    } catch {}
     askNotifyPermission();
     teams.test();
   };
   modal.querySelector('#teams-pause').onclick = () => teams.pause();
   modal.querySelector('#teams-snooze').onclick = () => teams.snooze();
 
-  // Presenca do operador + liberar o som no primeiro gesto (politica de autoplay)
-  for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart']) {
+  // Presenca do operador + liberar o som no primeiro gesto valido de usuario (politica de autoplay)
+  for (const ev of ['pointerdown', 'keydown', 'touchstart']) {
     window.addEventListener(ev, () => { void teams.audio.unlock(); teams.input(); }, { passive: true, capture: true });
   }
-  window.addEventListener('focus', () => teams.input());
+  for (const ev of ['pointermove', 'wheel']) {
+    window.addEventListener(ev, () => { teams.input(); }, { passive: true, capture: true });
+  }
+  window.addEventListener('focus', () => { void teams.audio.unlock(); teams.input(); });
   const tickTimer = setInterval(() => teams.tick(), 15000);
   tickTimer.unref?.(); // (so em Node/testes; no navegador e um numero)
 

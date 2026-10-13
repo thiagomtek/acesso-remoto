@@ -1,6 +1,9 @@
 # Gera o pacote de instalacao do agente: agent\dist\ (pasta pronta) e agent\transacao-agent-instalador.zip.
 # O Service Token da Cloudflare e lido de ~\.remote-hub\cf-service-token.env (fora do repositorio) e vai
 # gravado em agent.properties DENTRO do pacote - trate o zip como segredo (nao versionar, nao enviar por canal aberto).
+param(
+    [string]$Target = "D:\Servidores\Servicos\remote-hub\data\installer-base"
+)
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $here
@@ -98,3 +101,10 @@ Write-Host "Pacote pronto: $zipAssistente ($mb MB)"
 $zipLegacy = Join-Path $here "transacao-agent-instalador.zip"
 Copy-Item $zipAssistente $zipLegacy -Force
 Write-Host "Pacote legado sincronizado: $zipLegacy"
+
+# ---- Sincroniza a base do instalador do hub ----
+if ($Target -and (Test-Path (Split-Path -Parent $Target))) {
+    New-Item -ItemType Directory -Force $Target | Out-Null
+    Copy-Item -Path (Join-Path $here "dist\*") -Destination $Target -Recurse -Force
+    Write-Host "Base do instalador atualizada: $Target"
+}

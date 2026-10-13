@@ -442,6 +442,57 @@ test('teams: botao de teste espera a liberacao assincrona do audio antes de toca
   assert.equal(audio.playing, true);
 });
 
+test('teams: WebAudioSiren libera e toca mesmo com AudioContext suspenso e nao trava o teste', async () => {
+  const { WebAudioSiren } = await import('../public/teams-alert.js');
+  let resumeCalls = 0;
+  let oscStarted = false;
+  let oscStopped = false;
+  class MockAudioContext {
+    constructor() {
+      this.state = 'suspended';
+      this.destination = {};
+      this.currentTime = 0;
+    }
+    resume() {
+      resumeCalls++;
+      return new Promise((r) => setTimeout(() => { this.state = 'running'; r(); }, 50));
+    }
+    createGain() {
+      return { gain: { value: 0 }, connect() {}, disconnect() {} };
+    }
+    createOscillator() {
+      return {
+        type: 'sine',
+        frequency: { setValueAtTime() {} },
+        connect() {},
+        start() { oscStarted = true; },
+        stop() { oscStopped = true; },
+        disconnect() {},
+      };
+    }
+  }
+  const oldAC = globalThis.AudioContext;
+  globalThis.AudioContext = MockAudioContext;
+  try {
+    const siren = new WebAudioSiren();
+    assert.equal(siren.playing, false);
+    await siren.unlock();
+    assert.equal(resumeCalls, 1);
+    assert.equal(siren.ready, true);
+
+    const started = siren.start();
+    assert.equal(started, true);
+    assert.equal(siren.playing, true);
+    assert.equal(oscStarted, true);
+
+    siren.stop();
+    assert.equal(siren.playing, false);
+    assert.equal(oscStopped, true);
+  } finally {
+    globalThis.AudioContext = oldAC;
+  }
+});
+
 test('area de transferencia: colar envia o texto local ANTES do Ctrl+V; Cmd vira Ctrl no Mac; texto remoto chega na area local', async () => {
   const written = [];
   Object.defineProperty(globalThis, 'navigator', {

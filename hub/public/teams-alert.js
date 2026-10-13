@@ -23,47 +23,78 @@ export class WebAudioSiren {
   constructor() {
     this.ctx = null;
     this.osc = null;
+    this.gain = null;
     this.timer = null;
+    this.unlocked = false;
   }
 
   /** Precisa ser chamado depois de um gesto do usuario (politica de autoplay do navegador). */
   async unlock() {
     const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
     if (!AC) return false;
-    this.ctx ??= new AC();
-    try {
-      if (this.ctx.state === 'suspended') await this.ctx.resume();
-    } catch {
-      return false;
+    if (!this.ctx || this.ctx.state === 'closed') {
+      try { this.ctx = new AC(); } catch { return false; }
     }
-    return this.ctx.state === 'running';
+    if (this.ctx.state === 'suspended') {
+      try {
+        await Promise.race([
+          this.ctx.resume(),
+          new Promise((resolve) => setTimeout(resolve, 200))
+        ]);
+      } catch {
+        return false;
+      }
+    }
+    const running = this.ctx.state === 'running';
+    if (running) this.unlocked = true;
+    return running;
   }
 
-  get ready() { return !!this.ctx && this.ctx.state === 'running'; }
+  get ready() { return !!this.ctx && (this.ctx.state === 'running' || this.unlocked); }
   get playing() { return !!this.osc; }
 
   start() {
-    if (this.osc || !this.ctx || this.ctx.state !== 'running') return false;
-    const gain = this.ctx.createGain();
-    gain.gain.value = 1.0;
-    gain.connect(this.ctx.destination);
-    const osc = this.ctx.createOscillator();
-    osc.type = 'square';
-    osc.connect(gain);
-    osc.start();
-    this.osc = osc;
-    let high = false;
-    const tick = () => { osc.frequency.setValueAtTime(high ? 950 : 650, this.ctx.currentTime); high = !high; };
-    tick();
-    this.timer = setInterval(tick, 450);
-    return true;
+    if (this.osc) return true;
+    const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
+    if (!this.ctx || this.ctx.state === 'closed') {
+      if (!AC) return false;
+      try { this.ctx = new AC(); } catch { return false; }
+    }
+    if (this.ctx.state === 'suspended') {
+      try { void this.ctx.resume(); } catch { /* ignora */ }
+    }
+    try {
+      const gain = this.ctx.createGain();
+      gain.gain.value = 1.0;
+      gain.connect(this.ctx.destination);
+      const osc = this.ctx.createOscillator();
+      osc.type = 'square';
+      osc.connect(gain);
+      osc.start();
+      this.osc = osc;
+      this.gain = gain;
+      let high = false;
+      const tick = () => {
+        try {
+          osc.frequency.setValueAtTime(high ? 950 : 650, this.ctx.currentTime);
+          high = !high;
+        } catch { /* ja parado */ }
+      };
+      tick();
+      this.timer = setInterval(tick, 450);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   stop() {
     clearInterval(this.timer);
     this.timer = null;
     try { this.osc?.stop(); this.osc?.disconnect(); } catch { /* ja parado */ }
+    try { this.gain?.disconnect(); } catch { /* ja desconectado */ }
     this.osc = null;
+    this.gain = null;
   }
 }
 
@@ -161,8 +192,10 @@ export class TeamsAlert {
 
   sound(title) {
     this.alertShown = true;
-    if (!this.audio.ready) this.log('Som bloqueado pelo navegador: clique uma vez na pagina para liberar a sirene.');
-    if (!this.audio.start()) this.log('Sirene nao iniciou: clique em "Testar sirene" para liberar o audio desta pagina.');
+    if (!this.audio.start()) {
+      if (!this.audio.ready) this.log('Som bloqueado pelo navegador: clique uma vez na pagina para liberar a sirene.');
+      this.log('Sirene nao iniciou: clique em "Testar sirene" para liberar o audio desta pagina.');
+    }
     this.notify(title);
     this.onChange();
   }
