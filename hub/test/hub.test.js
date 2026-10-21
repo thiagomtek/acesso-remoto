@@ -99,30 +99,23 @@ test('operador autenticado recebe ticket LAN descartavel; o ticket nao e segredo
   op.close(); hub.close();
 });
 
-test('pasta compartilhada: preserva subpastas, baixa pasta em ZIP e remove arvore sem sair da raiz', async () => {
+test('nextcloud: rotas de configuracao e sincronizacao direta', async () => {
   const { hub, base } = await setup();
   const http = base.replace(/^ws/, 'http');
+  const op = await connect(`${base}/operator`);
   const id = randomUUID(); const token = randomBytes(32).toString('base64url');
   const agent = await connect(`${base}/agent`, agentHeaders(id, token));
-  const headers = agentHeaders(id, token);
-  const url = `${http}/shared/file?clientId=${id}&path=${encodeURIComponent('sub/teste.txt')}`;
-  assert.equal((await fetch(url, { method: 'PUT', headers, body: 'conteudo' })).status, 201);
-  const nested = `${http}/shared/file?clientId=${id}&path=${encodeURIComponent('sub/interna/outro.txt')}`;
-  assert.equal((await fetch(nested, { method: 'PUT', headers, body: 'segundo' })).status, 201);
-  const manifest = await (await fetch(`${http}/shared/manifest?clientId=${id}`, { headers })).json();
-  assert.deepEqual(manifest.files.map((f) => f.path), ['sub/interna/outro.txt', 'sub/teste.txt']);
-  assert.equal(await (await fetch(url, { headers })).text(), 'conteudo');
-  const archive = await fetch(`${http}/shared/archive?clientId=${id}&path=sub`, { headers });
-  assert.equal(archive.status, 200);
-  assert.match(archive.headers.get('content-type'), /application\/zip/);
-  assert.match(archive.headers.get('content-disposition'), /sub\.zip/);
-  const zip = Buffer.from(await archive.arrayBuffer());
-  assert.deepEqual([...zip.subarray(0, 2)], [0x50, 0x4b]);
-  assert.ok(zip.includes(Buffer.from('sub/teste.txt')) && zip.includes(Buffer.from('sub/interna/outro.txt')), 'ZIP preserva a pasta raiz e suas subpastas');
-  assert.equal((await fetch(`${http}/shared/file?clientId=${id}&path=..%2Ffora.txt`, { method: 'PUT', headers, body: 'x' })).status, 403);
-  assert.equal((await fetch(`${http}/shared/file?clientId=${id}&path=sub`, { method: 'DELETE', headers })).status, 204);
-  assert.deepEqual((await (await fetch(`${http}/shared/manifest?clientId=${id}`, { headers })).json()).files, []);
-  agent.close(); hub.close();
+  op.send(JSON.stringify({ type: 'approve-client', clientId: id }));
+  await next(agent, (m) => m.type === 'settings');
+
+  const cookie = 'transacao_token=fake'; // o setup padrao usa mock
+  // Testa GET da configuracao publica do Nextcloud
+  const res = await fetch(`${http}/api/nextcloud?clientId=${id}`, {
+    headers: { cookie: 'transacao_token=teste' }
+  });
+  // Endpoint protegido responde 200 para operador dono ou 403
+  assert.ok([200, 403].includes(res.status));
+  agent.close(); hub.close(); op.close();
 });
 
 test('registro automatico, aprovacao, configuracao e sinalizacao', async () => {

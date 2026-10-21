@@ -53,14 +53,14 @@ public final class UpdateSwapperTest {
         // saude: sinal presente = saudavel; processo que morre sem sinal = nao espera o prazo
         File flag = new File(dir, AgentUpdater.HEALTHY_FLAG);
         flag.delete();
-        check("saude: sem sinal e sem processo, vence o prazo curto como nao saudavel", !UpdateSwapper.waitHealthy(flag, null, 1));
+        check("saude: sem sinal e sem processo, vence o prazo curto como nao saudavel", !UpdateSwapper.waitHealthy(flag, null, null, 1));
         write(flag, "ok");
-        check("saude: com o sinal, saudavel na hora", UpdateSwapper.waitHealthy(flag, null, 5));
+        check("saude: com o sinal, saudavel na hora", UpdateSwapper.waitHealthy(flag, null, null, 5));
         flag.delete();
         Process dead = new ProcessBuilder(javaExe(), "-version").redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
         dead.waitFor();
         long t0 = System.currentTimeMillis();
-        boolean healthy = UpdateSwapper.waitHealthy(flag, dead, 30);
+        boolean healthy = UpdateSwapper.waitHealthy(flag, null, dead, 30);
         check("saude: processo novo que morreu sem sinal reprova SEM esperar os 30s (" + (System.currentTimeMillis() - t0) + " ms)",
                 !healthy && System.currentTimeMillis() - t0 < 5000);
 

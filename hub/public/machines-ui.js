@@ -12,6 +12,7 @@ export const ICONS = {
   log: svg('<path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/>'),
   check: svg('<path d="M20 6 9 17l-5-5"/>', 14),
   up: svg('<path d="M12 19V5M5 12l7-7 7 7"/>', 14),
+  down: svg('<path d="M12 5v14M5 12l7 7 7-7"/>', 14),
   play: svg('<path d="M6 4v16l14-8z"/>', 14),
   alert: svg('<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>', 14),
   undo: svg('<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>', 14),
@@ -49,6 +50,10 @@ export function describeHistory(e) {
       return { tone: 'bad', icon: 'undo', title: 'Atualização desfeita', detail: `${e.from} não subiu; voltou para ${e.to}` };
     case 'diagnostic':
       return { tone: 'bad', icon: 'alert', title: 'Diagnóstico técnico do agente', detail: e.text || '' };
+    case 'nextcloud':
+      return { tone: /Falha/.test(e.text || '') ? 'bad' : /concluída/.test(e.text || '') ? 'ok' : 'info',
+        icon: /Falha/.test(e.text || '') ? 'alert' : /concluída/.test(e.text || '') ? 'check' : 'play',
+        title: 'Sincronização Nextcloud', detail: e.text || '' };
     default:
       return { tone: 'info', icon: 'info', title: e.type || 'Evento', detail: e.text || '' };
   }
@@ -117,9 +122,42 @@ function buildHistory(c) {
   return wrap;
 }
 
+const SYNC_ACTIONS = {
+  start: ['Sincronização iniciada', 'info', 'play'], complete: ['Sincronização concluída', 'ok', 'check'],
+  error: ['Falha na sincronização', 'bad', 'alert'], download: ['Baixado do Nextcloud', 'ok', 'down'],
+  upload: ['Enviado ao Nextcloud', 'ok', 'up'], 'delete-local': ['Excluído nesta máquina', 'info', 'undo'],
+  'delete-remote': ['Excluído do Nextcloud', 'info', 'undo'], conflict: ['Conflito preservado', 'bad', 'alert'],
+  'mkdir-local': ['Pasta criada nesta máquina', 'ok', 'check'], 'mkdir-remote': ['Pasta criada no Nextcloud', 'ok', 'check'],
+};
+
+function buildSyncHistory(state, onMore) {
+  const wrap = el('div', { className: 'history' });
+  if (!state) return el('p', { className: 'muted small', textContent: 'Carregando atividade de sincronização…' });
+  if (state.error) return el('p', { className: 'small', textContent: `Erro ao carregar o histórico: ${state.error}` });
+  if (!state.events.length) return el('p', { className: 'muted small', textContent: 'Ainda não há atividade de sincronização registrada.' });
+  const ul = el('ul', { className: 'timeline' });
+  for (const e of [...state.events].reverse()) {
+    const [title, tone, icon] = SYNC_ACTIONS[e.action] || SYNC_ACTIONS.error;
+    ul.append(el('li', { className: `tl ${tone}` },
+      html('span', 'tl-icon', ICONS[icon] || ICONS.info),
+      el('div', { className: 'tl-body' },
+        el('div', { className: 'tl-title', textContent: title }),
+        e.path ? el('div', { className: 'tl-detail', textContent: e.path }) : null,
+        e.detail ? el('div', { className: 'tl-detail', textContent: e.detail }) : null),
+      el('time', { className: 'tl-time', textContent: new Date(e.t).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) })));
+  }
+  wrap.append(ul);
+  if (state.hasMore) {
+    const more = el('button', { className: 'btn ghost', textContent: 'Carregar eventos anteriores' });
+    more.onclick = onMore;
+    wrap.append(more);
+  }
+  return wrap;
+}
+
 /**
  * Cartao de uma maquina.
- * @param ctx {admin, send, latestAgent, panel: 'settings'|'history'|null, onPanel(id, name), onAccess(id), now}
+ * @param ctx {admin, send, latestAgent, panel: 'settings'|'history'|'sync'|null, onPanel(id, name), onAccess(id), now}
  */
 export function buildMachineCard(c, ctx) {
   const state = stateOf(c);
@@ -127,6 +165,7 @@ export function buildMachineCard(c, ctx) {
   const card = el('article', { className: 'machine' });
   card.dataset.id = c.id;
   card.dataset.state = state;
+  card.dataset.panel = ctx.panel || '';
 
   const meta = [c.info?.hostname && c.info.hostname !== c.name ? c.info.hostname : null, c.info?.os, c.info?.screen ? `${c.info.screen.w}×${c.info.screen.h}` : null].filter(Boolean).join(' · ');
   const seen = state === 'online' ? 'online agora' : c.lastSeen ? `visto ${ago(c.lastSeen, now)}` : 'nunca conectou';
@@ -197,12 +236,15 @@ export function buildMachineCard(c, ctx) {
     return b;
   };
   const actions = [access, tab('settings', 'Configurações', ICONS.settings), tab('history', 'Histórico', ICONS.history)];
+  if (c.nextcloud?.enabled) actions.push(tab('sync', 'Sincronização', ICONS.log));
   card.append(el('div', { className: 'm-actions' }, ...actions));
 
   if (ctx.panel === 'settings') {
     card.append(el('div', { className: 'm-panel' }, buildSettingsPanel(c, { admin: ctx.admin, send: ctx.send, withRemove: true })));
   } else if (ctx.panel === 'history') {
     card.append(el('div', { className: 'm-panel' }, buildHistory(c)));
+  } else if (ctx.panel === 'sync') {
+    card.append(el('div', { className: 'm-panel' }, buildSyncHistory(ctx.syncLogs?.get(c.id), () => ctx.onSyncMore?.(c.id))));
   }
   return card;
 }
@@ -211,12 +253,16 @@ export function buildMachineCard(c, ctx) {
 export function renderMachines(listEl, ctx) {
   const { clients, filter, query, panels } = ctx;
   const shown = visibleClients(clients, { filter, query });
-  const editing = document.activeElement?.closest?.('.machine')?.dataset.id;
+  const active = document.activeElement;
+  const editing = active?.matches?.('input, select, textarea') ? active.closest?.('.machine')?.dataset.id : null;
   const old = new Map([...listEl.querySelectorAll('.machine')].map((n) => [n.dataset.id, n]));
-  const nodes = shown.map((c) =>
-    c.id === editing && old.has(c.id)
-      ? old.get(c.id)
-      : buildMachineCard(c, { ...ctx, panel: panels.get(c.id) || null }));
+  const nodes = shown.map((c) => {
+    const panel = panels.get(c.id) || null;
+    const prev = old.get(c.id);
+    return c.id === editing && prev && (prev.dataset.panel || '') === (panel || '')
+      ? prev
+      : buildMachineCard(c, { ...ctx, panel });
+  });
   listEl.replaceChildren(...nodes);
   return shown.length;
 }

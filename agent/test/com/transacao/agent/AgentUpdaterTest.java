@@ -27,6 +27,7 @@ public final class AgentUpdaterTest {
         check("assinatura de OUTRA chave e recusada", !AgentUpdater.verifySignature(data, sig, other.getPublic()));
         check("assinatura truncada/lixo e recusada", !AgentUpdater.verifySignature(data, new byte[] {1, 2, 3}, good.getPublic()));
         check("chave publica embutida carrega", AgentUpdater.loadPublicKey(AgentUpdater.PUBLIC_KEY_B64) != null);
+        check("chave publica anterior de migracao carrega", AgentUpdater.loadPublicKey(AgentUpdater.PREVIOUS_PUBLIC_KEY_B64) != null);
 
         Map<String, byte[]> ok = AgentUpdater.readBundle(zip("transacao-agent.jar", "jar", "lib/x.jar", "lib"));
         check("zip normal e lido (2 arquivos)", ok.size() == 2 && ok.containsKey("lib/x.jar"));

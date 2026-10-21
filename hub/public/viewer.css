@@ -54,29 +54,6 @@ body.viewing { overflow: hidden; }
 #viewer .vbadge[hidden] { display: none; }
 #viewer .vsettings { position: absolute; top: 12px; right: 64px; z-index: 5; width: min(360px, 92vw); max-height: calc(100vh - 64px); overflow: auto; padding: 12px; background: #14161b; border: 1px solid #2a2f3a; border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.5); }
 #viewer .vsettings[hidden] { display: none; }
-#viewer .vshared { position: absolute; top: 50%; left: 50%; z-index: 10; transform: translate(-50%,-50%); width: min(920px, calc(100vw - 32px)); height: min(680px, calc(100vh - 48px)); overflow: hidden; display: flex; flex-direction: column; border: 1px solid #353b48; border-radius: 14px; background: #111318; box-shadow: 0 24px 80px rgba(0,0,0,.72); }
-#viewer .vshared[hidden] { display: none; }
-#viewer .vshared-head, #viewer .vshared-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid #292e38; background: #171a20; }
-#viewer .vshared-head { min-height: 48px; justify-content: space-between; }
-#viewer .vshared-head > div { display: grid; gap: 3px; }
-#viewer .vshared-head span, #viewer .vshared-status { color: #929baa; font-size: 12px; }
-#viewer .vshared-back { width: 34px; height: 34px; padding: 0; font-size: 26px; line-height: 1; }
-#viewer .vshared-breadcrumb { min-width: 0; flex: 1; display: flex; align-items: center; gap: 2px; overflow: hidden; }
-#viewer .vshared-actions { display: flex; align-items: center; gap: 6px; flex: none; }
-#viewer .vshared-columns, #viewer .vshared-row { display: grid; grid-template-columns: minmax(260px,1fr) 105px 95px 160px; align-items: center; }
-#viewer .vshared-columns { min-height: 34px; padding: 0 14px; border-bottom: 1px solid #292e38; color: #858e9d; font-size: 11px; text-transform: uppercase; }
-#viewer .vshared-list { flex: 1; min-height: 0; overflow: auto; padding: 4px 6px; outline: none; }
-#viewer .vshared-row { min-height: 42px; padding: 0 8px; border-radius: 7px; cursor: default; user-select: none; }
-#viewer .vshared-row:hover { background: #1d222b; }
-#viewer .vshared-row.selected { background: #245ca8; color: #fff; }
-#viewer .vshared-name-cell { min-width: 0; display: flex; align-items: center; gap: 9px; }
-#viewer .vshared-icon { width: 22px; height: 22px; flex: none; color: #c4ccd8; }
-#viewer .vshared-row.folder .vshared-icon { color: #68a8ff; }
-#viewer .vshared-icon svg { width: 22px; height: 22px; fill: currentColor; stroke: #0d1118; stroke-width: .6; }
-#viewer .vshared-name, #viewer .vshared-type, #viewer .vshared-size, #viewer .vshared-modified { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#viewer .vshared-type, #viewer .vshared-size, #viewer .vshared-modified { color: #aab2bf; font-size: 12px; }
-#viewer .vshared-empty { height: 100%; display: grid; place-items: center; color: #8e97a5; }
-#viewer .vshared-status { min-height: 30px; display: flex; align-items: center; padding: 0 16px; border-top: 1px solid #292e38; background: #14171c; }
 @media (max-width: 700px) {
 }
 #viewer .vsettings-title { font-weight: 600; margin-bottom: 10px; }

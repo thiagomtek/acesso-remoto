@@ -21,7 +21,10 @@ let clients = [];
 let latestAgent = '';
 let filter = store?.getItem('machinesFilter') || 'all';
 let query = '';
-const panels = new Map(); // id -> 'settings' | 'history'
+const panels = new Map(); // id -> 'settings' | 'history' | 'sync'
+const syncLogs = new Map();
+const syncLogLoading = new Set();
+const syncLogLimits = new Map();
 let lanAttempted = false;
 
 /** Aviso na parte de cima do painel (dispensavel). */
@@ -40,6 +43,18 @@ function send(msg) {
   ws.send(JSON.stringify(msg));
   return true;
 }
+
+async function loadSyncLog(id) {
+  if (syncLogLoading.has(id) || panels.get(id) !== 'sync') return;
+  syncLogLoading.add(id);
+  try {
+    const res = await fetch(`/api/nextcloud/log?clientId=${encodeURIComponent(id)}&limit=${syncLogLimits.get(id) || 300}`, { cache: 'no-store' });
+    const body = await res.json();
+    syncLogs.set(id, res.ok ? { events: body.events || [], hasMore: !!body.hasMore } : { error: body.error || `HTTP ${res.status}` });
+  } catch (e) { syncLogs.set(id, { error: e.message || 'Falha de conexão' }); }
+  finally { syncLogLoading.delete(id); if (panels.get(id) === 'sync') render(); }
+}
+setInterval(() => { for (const [id, panel] of panels) if (panel === 'sync') void loadSyncLog(id); }, 5000);
 
 function setConn(text, state) {
   $('conn-text').textContent = text;
@@ -141,11 +156,13 @@ function render() {
   $('summary').innerHTML = chips || '<span class="muted small">Nenhuma máquina</span>';
 
   renderMachines($('list'), {
-    clients, filter, query, panels, admin, send, latestAgent,
+    clients, filter, query, panels, syncLogs, admin, send, latestAgent,
+    onSyncMore: (id) => { syncLogLimits.set(id, Math.min(10000, (syncLogLimits.get(id) || 300) + 300)); void loadSyncLog(id); },
     onAccess: (id) => send({ type: 'session-open', clientId: id }),
     onPanel: (id, name) => {
       if (panels.get(id) === name) panels.delete(id); else panels.set(id, name);
       render();
+      if (panels.get(id) === 'sync') void loadSyncLog(id);
     },
   });
 }

@@ -38,8 +38,13 @@ import java.util.function.Consumer;
  */
 final class AgentUpdater {
 
-    /** Chave publica Ed25519 (X.509/DER em base64) que valida os pacotes. Gerada por agent/tools/gen-update-key.js. */
-    static final String PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEAWqYmFVQE8MOgyS/bIxEgKAlondkBKNTgcD3qD318hSc=";
+    /** Chave publica Ed25519 (X.509/DER em base64) usada para novas publicacoes. */
+    static final String PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEAeM1bg8KH2JhbwMtFVDYSWob6/CzsJ2lGyg0KZMgXYwo=";
+    /**
+     * Chave anterior, mantida apenas para a migracao. Assim, agentes instalados antes da rotacao
+     * conseguem receber este pacote-ponte, e ele continua aceitando os pacotes da chave atual.
+     */
+    static final String PREVIOUS_PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEAWqYmFVQE8MOgyS/bIxEgKAlondkBKNTgcD3qD318hSc=";
 
     static final String MAIN_JAR = "transacao-agent.jar";
     static final String ALT_MAIN_JAR = "assistente.jar";
@@ -65,6 +70,7 @@ final class AgentUpdater {
     /** Informa o hub (historico da maquina): update-applying / update-failed. */
     private final BiConsumer<String, Map<String, Object>> report;
     private final PublicKey publicKey;
+    private final PublicKey previousPublicKey;
     private final HubHttp hubHttp;
     private final ExecutorService exec = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "agent-updater");
@@ -104,12 +110,15 @@ final class AgentUpdater {
         this.log = log;
         this.hubHttp = new HubHttp(cfg, lanConnected);
         PublicKey key = null;
+        PublicKey previousKey = null;
         try {
             key = loadPublicKey(PUBLIC_KEY_B64);
+            previousKey = loadPublicKey(PREVIOUS_PUBLIC_KEY_B64);
         } catch (Exception e) {
             log.accept("Atualizacao automatica desativada: chave publica invalida (" + e.getMessage() + ").");
         }
         this.publicKey = key;
+        this.previousPublicKey = previousKey;
     }
 
     /** O hub informou uma versao diferente da nossa. Roda em segundo plano; ignora se ja esta tratando. */
@@ -176,7 +185,7 @@ final class AgentUpdater {
             throw new IOException("hash do pacote nao confere");
         }
         byte[] sig = Base64.getDecoder().decode(new String(get(base + "/updates/agent-update.zip.sig"), StandardCharsets.US_ASCII).trim());
-        if (!verifySignature(zip, sig, publicKey)) {
+        if (!verifySignature(zip, sig, publicKey) && !verifySignature(zip, sig, previousPublicKey)) {
             throw new IOException("ASSINATURA INVALIDA: pacote recusado");
         }
         Map<String, byte[]> files = readBundle(zip);
@@ -231,7 +240,9 @@ final class AgentUpdater {
         applying.put("to", newJarHash.substring(0, Math.min(8, newJarHash.length())));
         report.accept("update-applying", applying); // sai antes do reinicio: o hub registra no historico
         launchSwapper(dir, swaps, mainTarget, newJarHash, timeout);
-        beforeExit.run();
+        try {
+            beforeExit.run();
+        } catch (Throwable ignored) {}
         System.exit(0);
     }
 

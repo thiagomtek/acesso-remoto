@@ -95,7 +95,7 @@ public final class AgentApp {
     private InputInjector injector;
     private ScreenKeepAlive keepAlive;
     private TeamsActivityWatcher teams;
-    private SharedFolderSync sharedFolder;
+    private NextcloudDirectSync nextcloudSync;
     private TrayIcon tray;
     private volatile String status = "Conectando...";
     // Locks separados: nenhum deles e segurado durante chamadas nativas do WebRTC nem durante log().
@@ -171,6 +171,8 @@ public final class AgentApp {
             log("Nao foi possivel identificar a versao do agente: " + e.getMessage());
         }
         log("Assistente iniciando. Hub: " + cfg.hubUrl + " | id " + cfg.clientId + " | versao " + (jarHash.isEmpty() ? "dev" : jarHash.substring(0, 8)));
+        // Limpeza de resquicios do antigo recurso de pasta compartilhada
+        new File(cfg.dir, "shared-folder-state.properties").delete();
         // Inicializacao automatica SO para o usuario atual (HKCU Run / LaunchAgent / autostart), sem scripts:
         // registrada em toda partida - inclusive logo apos uma atualizacao - de acordo com a preferencia local.
         settings.loadLocal(new File(cfg.dir, "local-settings.properties"));
@@ -207,8 +209,7 @@ public final class AgentApp {
         initTray();
         scheduleHealthSignal();
         timer.scheduleAtFixedRate(this::sendStats, 5, 10, TimeUnit.SECONDS);
-        sharedFolder = new SharedFolderSync(cfg, settings, new HubHttp(cfg, () -> hub != null && hub.isLanConnected()), this::log);
-        timer.scheduleWithFixedDelay(sharedFolder::syncIfEnabled, 8, 5, TimeUnit.SECONDS);
+        nextcloudSync = new NextcloudDirectSync(cfg, this::log, this::reportEvent, () -> !sessions.isEmpty());
         hub = new HubConnection(cfg, hostname(), new HubConnection.Listener() {
             @Override
             public void onOpen() {
@@ -251,6 +252,10 @@ public final class AgentApp {
                 settings.update(Json.obj(m.get("settings")));
                 applySettings();
                 refreshClipboard();
+                Map<String, Object> nc = Json.obj(m.get("nextcloud"));
+                if (nc != null && nextcloudSync != null) {
+                    nextcloudSync.updateConfig(nc);
+                }
                 for (Session s : sessions.values()) {
                     RemoteSession r = s.rtc;
                     if (r != null) {
@@ -262,6 +267,13 @@ public final class AgentApp {
                     }
                 }
                 break;
+            case "nextcloud-config": {
+                Map<String, Object> ncConfig = Json.obj(m.get("nextcloud"));
+                if (ncConfig != null && nextcloudSync != null) {
+                    nextcloudSync.updateConfig(ncConfig);
+                }
+                break;
+            }
             case "update": // o hub tem uma versao diferente: baixa, confere assinatura e troca quando ocioso
                 if (!settings.autoUpdate) {
                     log("Atualizacao automatica recusada: desabilitada nas configuracoes da maquina.");
@@ -330,6 +342,12 @@ public final class AgentApp {
                 if (logId != null) pendingCentralLogs.remove(logId);
                 break;
             }
+            case "sync-nextcloud": {
+                if (nextcloudSync != null) {
+                    nextcloudSync.requestSync(Json.str(m, "requestId"));
+                }
+                break;
+            }
             case "session-close": {
                 Session s = sessions.remove(Json.str(m, "sessionId"));
                 if (s != null) {
@@ -347,6 +365,9 @@ public final class AgentApp {
         Session s = new Session(id);
         sessions.put(id, s);
         refreshClipboard();
+        if (nextcloudSync != null) {
+            nextcloudSync.requestSync();
+        }
         // A bandeja e um identificador discreto do agente; nao revela para quem olhar a barra de
         // tarefas que existe uma sessao remota ativa. O estado operacional continua centralizado
         // no painel autenticado e nos logs tecnicos.
@@ -561,24 +582,43 @@ public final class AgentApp {
     }
 
     /**
-     * Depois de ~20s rodando sem cair, avisa ao script de atualizacao que esta versao sobe bem. Sem esse
-     * sinal, o script desfaz a atualizacao e volta a versao anterior.
+     * Depois de ~12s rodando sem cair, avisa ao script de atualizacao que esta versao subiu bem. Sem esse
+     * sinal, o script desfaz a atualizacao e volta a versao anterior. Roda em thread propria para nunca
+     * disputar fila com outros agendamentos.
      */
     private void scheduleHealthSignal() {
         if (runningJar == null) {
             return;
         }
-        timer.schedule(() -> {
+        Thread t = new Thread(() -> {
             try {
-                Files.writeString(new File(runningJar.getParentFile(), AgentUpdater.HEALTHY_FLAG).toPath(), jarHash);
-            } catch (IOException e) {
+                // Emite o sinal logo no inicio e reafirma apos 3 segundos estaveis
+                writeHealthFlag();
+                Thread.sleep(3_000);
+                writeHealthFlag();
+            } catch (Exception e) {
                 log("Nao foi possivel gravar o sinal de saude: " + e.getMessage());
             } finally {
                 // Mesmo que o arquivo nao possa ser escrito, esta instancia ja passou a janela de
                 // estabilidade. Libera apenas agora qualquer oferta que tenha chegado no inicio.
                 updater.confirmHealthy();
             }
-        }, 20, TimeUnit.SECONDS);
+        }, "agent-health-signal");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void writeHealthFlag() {
+        if (runningJar != null && runningJar.getParentFile() != null) {
+            try {
+                Files.writeString(new File(runningJar.getParentFile(), AgentUpdater.HEALTHY_FLAG).toPath(), jarHash);
+            } catch (Exception ignored) {}
+        }
+        if (cfg != null && cfg.dir != null) {
+            try {
+                Files.writeString(new File(cfg.dir, AgentUpdater.HEALTHY_FLAG).toPath(), jarHash);
+            } catch (Exception ignored) {}
+        }
     }
 
     /** Evento para o hub (historico/painel). Melhor esforco: sem conexao, so nao registra. */
@@ -748,8 +788,13 @@ public final class AgentApp {
             update.addActionListener(e -> requestManualUpdate());
             MenuItem exit = new MenuItem("Sair");
             exit.addActionListener(e -> {
-                shutdown();
-                System.exit(0);
+                new Thread(() -> {
+                    try {
+                        shutdown();
+                    } finally {
+                        System.exit(0);
+                    }
+                }, "agent-exit").start();
             });
             popup.add(info);
             popup.addSeparator();
@@ -888,8 +933,15 @@ public final class AgentApp {
 
     private void shutdown() {
         closeAllSessions();
+        if (nextcloudSync != null) {
+            try {
+                nextcloudSync.close();
+            } catch (Throwable ignored) {}
+        }
         if (hub != null) {
-            hub.stop();
+            try {
+                hub.stop();
+            } catch (Throwable ignored) {}
         }
     }
 

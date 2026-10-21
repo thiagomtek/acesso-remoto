@@ -59,7 +59,8 @@ public final class UpdateSwapper {
         waitForExit(pid, 40);
         Thread.sleep(1000);
 
-        File flag = new File(dir, AgentUpdater.HEALTHY_FLAG);
+        File flagInDir = new File(dir, AgentUpdater.HEALTHY_FLAG);
+        File flagInJarDir = mainJar != null && mainJar.getParentFile() != null ? new File(mainJar.getParentFile(), AgentUpdater.HEALTHY_FLAG) : null;
         try {
             swapAll(pairs, 60);
         } catch (IOException e) {
@@ -69,11 +70,12 @@ public final class UpdateSwapper {
             startAgent(java, mainJar, dir);
             System.exit(1);
         }
-        flag.delete();
+        flagInDir.delete();
+        if (flagInJarDir != null) flagInJarDir.delete();
         Process fresh = startAgent(java, mainJar, dir);
         log("Versao nova iniciada. Aguardando o sinal de saude (ate " + timeoutS + "s).");
 
-        if (waitHealthy(flag, fresh, timeoutS)) {
+        if (waitHealthy(flagInDir, flagInJarDir, fresh, timeoutS)) {
             cleanBackups(pairs);
             log("Versao " + shortHash(newHash) + " saudavel. Backups removidos.");
             return;
@@ -142,19 +144,22 @@ public final class UpdateSwapper {
     }
 
     /** Saudavel = o sinal apareceu. Se o processo novo morrer antes de dar o sinal, nao ha por que esperar o prazo. */
-    static boolean waitHealthy(File flag, Process fresh, int timeoutS) throws InterruptedException {
+    static boolean waitHealthy(File flag1, File flag2, Process fresh, int timeoutS) throws InterruptedException {
         long until = System.currentTimeMillis() + timeoutS * 1000L;
         while (System.currentTimeMillis() < until) {
-            if (flag.exists()) {
+            if ((flag1 != null && flag1.exists()) || (flag2 != null && flag2.exists())) {
                 return true;
             }
-            if (fresh != null && !fresh.isAlive() && !flag.exists()) {
+            if (fresh != null && !fresh.isAlive()) {
+                if ((flag1 != null && flag1.exists()) || (flag2 != null && flag2.exists())) {
+                    return true;
+                }
                 log("O processo da versao nova terminou (codigo " + fresh.exitValue() + ") sem dar o sinal de saude.");
                 return false;
             }
             Thread.sleep(500);
         }
-        return flag.exists();
+        return (flag1 != null && flag1.exists()) || (flag2 != null && flag2.exists());
     }
 
     /** Marca qualquer falha de instalacao, inclusive arquivo bloqueado por um servico, para nao entrar em loop. */

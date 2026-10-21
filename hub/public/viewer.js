@@ -4,6 +4,7 @@
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
 import { buildSettingsPanel } from './settings.js';
 import { mountOrb } from './orb.js';
+import { openNextcloudModal, closeNextcloudModal, requestNextcloudSync } from './nextcloud-ui.js';
 
 export class Viewer {
   /** @param {{send:(m:object)=>void, isAdmin:()=>boolean, onClosed:()=>void}} opts  send = mensagem ao hub */
@@ -50,8 +51,6 @@ export class Viewer {
         <input class="vkb-input" type="text" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Digite para enviar à máquina remota…">
         <button class="vkb-close" type="button" aria-label="Fechar teclado">✕</button>
       </div>
-      <input class="vshared-file" type="file" multiple hidden>
-      <input class="vshared-folder" type="file" webkitdirectory directory multiple hidden>
       <button class="vorb" type="button" title="Menu (arraste para mover)" aria-label="Menu do acesso remoto" aria-expanded="false" data-state="wait">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
       </button>
@@ -63,29 +62,14 @@ export class Viewer {
         </div>
         <button data-act="cfg" title="Configurações desta máquina (aplicadas na hora)">Configurações</button>
         <button data-act="keyboard" title="Abrir o teclado para digitar (útil no celular)">Teclado</button>
-        <button data-act="shared" title="Gerenciar os arquivos sincronizados com recebimentos">Pasta compartilhada</button>
+        <button data-act="sync-nextcloud" title="Sincronizar agora a pasta recebimentos com o Nextcloud">Sincronizar Nextcloud</button>
+        <button data-act="nextcloud" title="Configurar espelho da pasta recebimentos com o Nextcloud">Nextcloud</button>
         <button data-act="compat" title="Usar o modo compatível (sem WebRTC)">Modo compatível</button>
         <button data-act="stats" title="Mostrar/ocultar as estatísticas na tela">Estatísticas</button>
         <button data-act="fs" title="Tela cheia">Tela cheia</button>
         <button data-act="close" class="danger">Encerrar acesso</button>
       </div>
       <div class="vsettings" hidden></div>
-      <div class="vshared" hidden role="dialog" aria-modal="true" aria-label="Pasta compartilhada">
-        <div class="vshared-head"><div><strong>Recebimentos</strong><span>Pasta compartilhada com esta máquina</span></div><button type="button" data-shared-close aria-label="Fechar">✕</button></div>
-        <div class="vshared-toolbar">
-          <button type="button" class="vshared-back" data-shared-back title="Voltar" aria-label="Voltar">‹</button>
-          <nav class="vshared-breadcrumb" aria-label="Caminho da pasta"></nav>
-          <div class="vshared-actions">
-            <button type="button" data-shared-download hidden>Baixar</button>
-            <button type="button" data-shared-delete class="danger" hidden>Excluir</button>
-            <button type="button" data-shared-add>+ Arquivos</button>
-            <button type="button" data-shared-add-folder>+ Pasta</button>
-          </div>
-        </div>
-        <div class="vshared-columns" aria-hidden="true"><span>Nome</span><span>Tipo</span><span>Tamanho</span><span>Modificado</span></div>
-        <div class="vshared-list" role="listbox" aria-live="polite"></div>
-        <div class="vshared-status"></div>
-      </div>
       <div class="vtoast" hidden></div>`;
     document.body.append(el);
     this.el = el;
@@ -107,15 +91,6 @@ export class Viewer {
     this.cursorEl = el.querySelector('.vcursor');
     this.kbEl = el.querySelector('.vkeyboard');
     this.kbInput = el.querySelector('.vkb-input');
-    this.sharedFileInput = el.querySelector('.vshared-file');
-    this.sharedFolderInput = el.querySelector('.vshared-folder');
-    this.sharedEl = el.querySelector('.vshared');
-    this.sharedList = el.querySelector('.vshared-list');
-    this.sharedBreadcrumb = el.querySelector('.vshared-breadcrumb');
-    this.sharedBack = el.querySelector('[data-shared-back]');
-    this.sharedDownload = el.querySelector('[data-shared-download]');
-    this.sharedDelete = el.querySelector('[data-shared-delete]');
-    this.sharedStatus = el.querySelector('.vshared-status');
     const store = (() => { try { return window.localStorage; } catch { return null; } })();
     // Bolinha flutuante (no lugar da barra fixa); ao fechar o menu, fecha tambem os paineis "filhos"
     // que ela abre (Configuracoes, teclado na tela) - senao eles ficam flutuando sozinhos na tela sem
@@ -124,7 +99,7 @@ export class Viewer {
       storage: store,
       onClose: () => {
         this.settingsEl.hidden = true;
-        this.closeSharedFolder();
+        closeNextcloudModal();
         this.toggleKeyboard(false);
         this.focusRemoteInput();
       },
@@ -146,15 +121,8 @@ export class Viewer {
       this.orb.close();
       this.toggleKeyboard(willOpen);
     };
-    act('shared', () => this.openSharedFolder());
-    this.sharedFileInput.onchange = () => { this.uploadSharedFiles([...this.sharedFileInput.files], false); this.sharedFileInput.value = ''; };
-    this.sharedFolderInput.onchange = () => { this.uploadSharedFiles([...this.sharedFolderInput.files], true); this.sharedFolderInput.value = ''; };
-    el.querySelector('[data-shared-close]').onclick = () => this.closeSharedFolder();
-    el.querySelector('[data-shared-add]').onclick = () => this.sharedFileInput.click();
-    el.querySelector('[data-shared-add-folder]').onclick = () => this.sharedFolderInput.click();
-    this.sharedBack.onclick = () => this.navigateSharedParent();
-    this.sharedDownload.onclick = () => this.downloadSharedSelection();
-    this.sharedDelete.onclick = () => this.deleteSharedSelection();
+    act('sync-nextcloud', () => this.syncNextcloudNow());
+    act('nextcloud', () => this.openNextcloudConfig());
     this.kbEl.querySelector('.vkb-close').onclick = () => this.toggleKeyboard(false);
     this.wireKeyboardInput();
     // Estatisticas translucidas na tela (estilo indicador de FPS de jogos); preferencia lembrada
@@ -268,7 +236,8 @@ export class Viewer {
         return;
       }
 
-      if (this.settingsEl.contains(document.activeElement) || this.menuEl.contains(document.activeElement) || this.orbEl === document.activeElement || this.kbEl.contains(document.activeElement)) return;
+      const ncModal = document.getElementById('nextcloud-modal');
+      if (this.settingsEl.contains(document.activeElement) || this.menuEl.contains(document.activeElement) || this.orbEl === document.activeElement || this.kbEl.contains(document.activeElement) || ncModal?.contains(document.activeElement)) return;
       if (!(document.activeElement === this.stage || document.activeElement === this.textCapture || document.fullscreenElement)) return;
 
       const captureText = document.activeElement === this.textCapture;
@@ -600,7 +569,12 @@ export class Viewer {
       : /Win/i.test(platformText) ? 'windows'
         : /Android/i.test(platformText) ? 'android'
           : /Linux/i.test(platformText) ? 'linux' : 'other';
+    const browser = /Edg\//i.test(ua) ? 'edge'
+      : /Firefox\//i.test(ua) ? 'firefox'
+        : /Chrome\//i.test(ua) ? 'chrome'
+          : /Safari\//i.test(ua) ? 'safari' : 'other';
     this.operatorPlatform = platform;
+    this.operatorBrowser = browser;
   }
 
   /** Retorna texto confirmado pelo navegador, nunca nomes de teclas de controle. */
@@ -651,144 +625,30 @@ export class Viewer {
     this.settingsEl.replaceChildren(title, buildSettingsPanel(this.client, { admin: this.isAdmin(), send: this.sendHub }));
   }
 
-  closeSharedFolder() {
-    this.sharedEl.hidden = true;
-    clearInterval(this.sharedRefreshTimer);
-    this.sharedRefreshTimer = null;
-    this.sharedSelected = null;
+  openNextcloudConfig() {
+    if (!this.client) return;
+    openNextcloudModal(this.client, {
+      container: this.el,
+      onSynced: () => {},
+    });
   }
 
-  async openSharedFolder() {
-    if (!this.client) return;
-    this.settingsEl.hidden = true;
-    this.sharedEl.hidden = false;
-    this.sharedCurrentPath = '';
-    this.sharedSelected = null;
-    await this.refreshSharedFolder();
-    clearInterval(this.sharedRefreshTimer);
-    this.sharedRefreshTimer = setInterval(() => { if (!this.sharedEl.hidden) this.refreshSharedFolder(true); }, 3000);
-  }
-
-  async refreshSharedFolder(silent = false) {
-    if (!this.client) return;
-    if (!silent) this.sharedList.replaceChildren(Object.assign(document.createElement('div'), { className: 'sub', textContent: 'Carregando arquivos…' }));
+  async syncNextcloudNow() {
+    const id = this.client?.id || this.clientId;
+    if (!id) return;
+    this.toast('Sincronizando com o Nextcloud…');
     try {
-      const r = await fetch(`/shared/manifest?clientId=${encodeURIComponent(this.client.id)}`, { credentials: 'same-origin', cache: 'no-store' });
-      if (!r.ok) throw new Error();
-      const { files } = await r.json();
-      this.sharedFiles = files || [];
-      this.renderSharedFolder();
-    } catch { this.sharedList.replaceChildren(Object.assign(document.createElement('div'), { className: 'sub', textContent: 'Não foi possível carregar a pasta compartilhada.' })); }
-  }
-
-  renderSharedFolder() {
-    const current = this.sharedCurrentPath || '';
-    const prefix = current ? current + '/' : '';
-    const folders = new Map(); const files = [];
-    for (const raw of this.sharedFiles || []) {
-      const path = String(raw.path || '');
-      if (!path.startsWith(prefix)) continue;
-      const rest = path.slice(prefix.length); const slash = rest.indexOf('/');
-      if (slash >= 0) {
-        const name = rest.slice(0, slash); const folderPath = prefix + name;
-        const folder = folders.get(folderPath) || { path: folderPath, name, folder: true, size: 0, mtime: 0 };
-        folder.size += Number(raw.size) || 0; folder.mtime = Math.max(folder.mtime, Number(raw.mtime) || 0);
-        folders.set(folderPath, folder);
-      } else if (rest) files.push({ ...raw, path, name: rest, folder: false });
+      const data = await requestNextcloudSync(id);
+      const n = Number(data.lastChanges) || 0;
+      this.toast(
+        n > 0
+          ? `Nextcloud sincronizado (${n} ${n === 1 ? 'alteração' : 'alterações'})`
+          : 'Nextcloud sincronizado · nenhuma alteração pendente',
+      );
+    } catch (e) {
+      if (/Configure e ative/i.test(e.message || '')) this.openNextcloudConfig();
+      this.toast(e.message || 'Erro de rede ao sincronizar com o Nextcloud');
     }
-    const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-    this.sharedVisibleItems = [...folders.values()].sort(byName).concat(files.sort(byName));
-    if (this.sharedSelected && !this.sharedVisibleItems.some((item) => item.path === this.sharedSelected.path && item.folder === this.sharedSelected.folder)) this.sharedSelected = null;
-    this.renderSharedBreadcrumb();
-    this.sharedList.replaceChildren();
-    if (!this.sharedVisibleItems.length) this.sharedList.append(Object.assign(document.createElement('div'), { className: 'vshared-empty', textContent: 'Esta pasta está vazia' }));
-    for (const item of this.sharedVisibleItems) this.sharedList.append(this.sharedRow(item));
-    const fileCount = this.sharedVisibleItems.filter((item) => !item.folder).length;
-    const folderCount = this.sharedVisibleItems.length - fileCount;
-    this.sharedStatus.textContent = `${folderCount} pasta${folderCount === 1 ? '' : 's'} · ${fileCount} arquivo${fileCount === 1 ? '' : 's'}`;
-    this.syncSharedSelection();
-  }
-
-  renderSharedBreadcrumb() {
-    const parts = (this.sharedCurrentPath || '').split('/').filter(Boolean);
-    const buttons = [];
-    const root = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Recebimentos' });
-    root.onclick = () => this.navigateShared(''); buttons.push(root);
-    let path = '';
-    for (const part of parts) {
-      buttons.push(Object.assign(document.createElement('span'), { textContent: '›' }));
-      path = path ? path + '/' + part : part;
-      const target = path;
-      const button = Object.assign(document.createElement('button'), { type: 'button', textContent: part });
-      button.onclick = () => this.navigateShared(target); buttons.push(button);
-    }
-    this.sharedBreadcrumb.replaceChildren(...buttons);
-    this.sharedBack.disabled = !parts.length;
-  }
-
-  sharedRow(item) {
-    const row = document.createElement('div'); row.className = 'vshared-row'; row.tabIndex = 0; row.setAttribute('role', 'option');
-    row.classList.toggle('folder', !!item.folder); row.dataset.path = item.path;
-    const icon = document.createElement('span'); icon.className = 'vshared-icon';
-    icon.innerHTML = item.folder
-      ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h7l2 2h9v10H3z"/><path d="M3 8.5h18"/></svg>'
-      : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/></svg>';
-    const label = Object.assign(document.createElement('span'), { className: 'vshared-name', textContent: item.name, title: item.name });
-    const nameCell = document.createElement('div'); nameCell.className = 'vshared-name-cell'; nameCell.append(icon, label);
-    const type = Object.assign(document.createElement('span'), { className: 'vshared-type', textContent: item.folder ? 'Pasta' : this.sharedFileType(item.name) });
-    const size = Object.assign(document.createElement('span'), { className: 'vshared-size', textContent: item.folder ? '—' : this.sharedFormatSize(Number(item.size) || 0) });
-    const modified = Object.assign(document.createElement('span'), { className: 'vshared-modified', textContent: item.mtime ? new Date(item.mtime).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : '—' });
-    row.append(nameCell, type, size, modified);
-    row.onclick = () => this.selectShared(item);
-    row.ondblclick = () => item.folder ? this.navigateShared(item.path) : this.downloadShared(item);
-    row.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); item.folder ? this.navigateShared(item.path) : this.downloadShared(item); } if (e.key === ' ') { e.preventDefault(); this.selectShared(item); } };
-    return row;
-  }
-
-  navigateShared(path) { this.sharedCurrentPath = path || ''; this.sharedSelected = null; this.renderSharedFolder(); }
-  navigateSharedParent() { const parts = (this.sharedCurrentPath || '').split('/').filter(Boolean); parts.pop(); this.navigateShared(parts.join('/')); }
-  selectShared(item) { this.sharedSelected = item; this.syncSharedSelection(); }
-  syncSharedSelection() {
-    for (const row of this.sharedList.querySelectorAll('.vshared-row')) {
-      const selected = !!this.sharedSelected && row.dataset.path === this.sharedSelected.path;
-      row.classList.toggle('selected', selected); row.setAttribute('aria-selected', String(selected));
-    }
-    const selected = !!this.sharedSelected;
-    this.sharedDownload.hidden = !selected; this.sharedDelete.hidden = !selected;
-    if (selected) this.sharedDownload.textContent = this.sharedSelected.folder ? 'Baixar ZIP' : 'Baixar';
-  }
-  downloadSharedSelection() { if (this.sharedSelected) this.downloadShared(this.sharedSelected); }
-  downloadShared(item) { const a = document.createElement('a'); const endpoint = item.folder ? 'archive' : 'file'; a.href = `/shared/${endpoint}?clientId=${encodeURIComponent(this.client.id)}&path=${encodeURIComponent(item.path)}`; a.download = item.name + (item.folder ? '.zip' : ''); a.click(); }
-  async deleteSharedSelection() {
-    const item = this.sharedSelected; if (!item) return;
-    if (!confirm(`Excluir ${item.folder ? 'a pasta e todo o seu conteúdo' : 'o arquivo'} “${item.name}”?`)) return;
-    const r = await fetch(`/shared/file?clientId=${encodeURIComponent(this.client.id)}&path=${encodeURIComponent(item.path)}`, { method: 'DELETE', credentials: 'same-origin' });
-    if (!r.ok) this.toast(`Não foi possível excluir ${item.folder ? 'a pasta' : 'o arquivo'}`);
-    this.sharedSelected = null; await this.refreshSharedFolder();
-  }
-  sharedFileType(name) { const dot = name.lastIndexOf('.'); return dot > 0 ? name.slice(dot + 1).toUpperCase() : 'Arquivo'; }
-  sharedFormatSize(bytes) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`; if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`; return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`; }
-
-  async uploadSharedFiles(files, preserveFolders = false) {
-    if (!this.client || !files?.length) return;
-    const pending = files.map((file) => {
-      const raw = preserveFolders ? (file.webkitRelativePath || file.name) : file.name;
-      const relative = String(raw || '').replaceAll('\\', '/').split('/').filter(Boolean).join('/');
-      const path = [this.sharedCurrentPath, relative].filter(Boolean).join('/');
-      return { file, path };
-    }).filter(({ path }) => path && !path.split('/').some((part) => part === '.' || part === '..' || /[<>:"|?*\x00-\x1f]/.test(part)));
-    let cursor = 0; let completed = 0; let failed = files.length - pending.length;
-    const worker = async () => {
-      while (cursor < pending.length) {
-        const { file, path } = pending[cursor++];
-        if (file.size > 512 * 1024 * 1024) { failed++; continue; }
-        this.toast(`Enviando ${++completed} de ${pending.length}…`);
-        try { const r = await fetch(`/shared/file?clientId=${encodeURIComponent(this.client.id)}&path=${encodeURIComponent(path)}`, { method: 'PUT', credentials: 'same-origin', body: file }); if (!r.ok) throw new Error(); } catch { failed++; }
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(3, pending.length) }, worker));
-    if (failed) this.toast(`${failed} item(ns) não puderam ser enviados`); else this.toast(`${pending.length} item(ns) adicionados à pasta compartilhada`);
-    await this.refreshSharedFolder();
   }
 
   /** Canal pronto para comandos: canal de dados (WebRTC) ou o proprio hub (modo compativel). */
@@ -809,6 +669,8 @@ export class Viewer {
   }
 
   onTelemetryAck() {}
+
+  recoverInputTraces() {}
 
   /** Pede ao agente para abandonar o WebRTC e usar o modo compativel (Java puro). */
   requestCompat() {
@@ -1152,7 +1014,7 @@ export class Viewer {
     this.composing = false;
     this.compositionCommitted = false;
     this.textCapture.value = '';
-    this.closeSharedFolder();
+    closeNextcloudModal();
     this.clientId = null;
     this.client = null;
     this.settingsEl.hidden = true;

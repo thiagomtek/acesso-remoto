@@ -1,6 +1,8 @@
 // Configuracoes de uma maquina, compartilhadas pelo cartao da lista e pela tela de visualizacao.
 // Qualquer mudanca vai ao hub (update-client), que a aplica na hora no agente da maquina.
 
+import { openNextcloudModal } from './nextcloud-ui.js';
+
 export const SETTINGS = [
   ['localOnly', 'Bloquear conexão estritamente à rede local (LAN)'],
   ['startWithSystem', 'Iniciar com o sistema'],
@@ -81,6 +83,16 @@ export function buildSettingsPanel(client, { admin, send, withRemove = false }) 
   ql.append(q, 'Qualidade'); // a linha inverte a ordem (rotulo a esquerda, controle a direita)
 
   panel.append(ql);
+
+  const ncBtn = Object.assign(document.createElement('button'), {
+    type: 'button',
+    className: 'nextcloud-cfg-btn',
+    textContent: 'Configurar Nextcloud',
+    disabled: !admin,
+  });
+  ncBtn.dataset.nextcloudOpen = 'true';
+  ncBtn.onclick = () => openNextcloudModal(client);
+  panel.append(ncBtn);
 
   if (admin && withRemove) {
     const rm = Object.assign(document.createElement('button'), { textContent: 'Remover máquina' });

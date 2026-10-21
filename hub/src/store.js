@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { sanitizeNextcloudConfig } from './nextcloud.js';
 
 // Configuracoes por client, editadas no painel web e empurradas ao client.
 // Substituem as opcoes que antes ficavam na janela do client.
@@ -10,7 +11,6 @@ export const DEFAULT_SETTINGS = {
   keepAwake: false,
   teamsWatcher: false,
   startWithSystem: true,
-  sharedFolderSync: true,
   quality: 'auto', // auto | max | balanced | economy
   localOnly: false,
   webrtcEnabled: true,
@@ -25,9 +25,6 @@ const VALIDATORS = {
   keepAwake: (v) => typeof v === 'boolean',
   teamsWatcher: (v) => typeof v === 'boolean',
   startWithSystem: (v) => typeof v === 'boolean',
-  // A pasta compartilhada substitui a transferencia avulsa e faz parte do produto.
-  // Rejeita `false` inclusive de uma aba antiga que ainda esteja em cache.
-  sharedFolderSync: (v) => v === true,
   quality: (v) => ['auto', 'max', 'balanced', 'economy'].includes(v),
   localOnly: (v) => typeof v === 'boolean',
   webrtcEnabled: (v) => typeof v === 'boolean',
@@ -51,9 +48,11 @@ export class Store {
   constructor(dir) {
     this.file = join(dir, 'clients.json');
     this.logsDir = join(dir, 'agent-logs');
+    this.syncLogsDir = join(dir, 'nextcloud-logs');
     this.agentLogSeen = new Map();
     mkdirSync(dir, { recursive: true });
     mkdirSync(this.logsDir, { recursive: true });
+    mkdirSync(this.syncLogsDir, { recursive: true });
     this.clients = existsSync(this.file) ? JSON.parse(readFileSync(this.file, 'utf8')) : {};
     // Preferencias removidas nao podem sobreviver em maquinas antigas: arquivos vao para a pasta ativa,
     // e o experimento de modo servico/driver virtual foi descontinuado.
@@ -65,11 +64,8 @@ export class Store {
         migrated = true;
       }
       delete c.settings?.receivedFilesDir;
-      // A pasta compartilhada substituiu o fluxo antigo de envio avulso. Maquinas ja
-      // cadastradas precisam recebe-la tambem; antes a chave ausente era interpretada
-      // pelo agente como "desligada" e a sincronizacao jamais iniciava.
-      if (c.settings && c.settings.sharedFolderSync !== true) {
-        c.settings.sharedFolderSync = true;
+      if (Object.hasOwn(c.settings || {}, 'sharedFolderSync')) {
+        delete c.settings.sharedFolderSync;
         migrated = true;
       }
       if (Object.hasOwn(c.settings || {}, 'serviceMode')) {
@@ -154,6 +150,15 @@ export class Store {
     return c;
   }
 
+  /** Configuracao do espelho Nextcloud da maquina (credenciais mantidas apenas no Hub). */
+  updateNextcloud(id, nextcloudPatch) {
+    const c = this.clients[id];
+    if (!c) return null;
+    c.nextcloud = sanitizeNextcloudConfig(nextcloudPatch, c.nextcloud || {});
+    this.#save();
+    return c.nextcloud;
+  }
+
   /** Associação administrativa persistente. Não altera identidade, segredo ou rota do agente. */
   assignOwner(id, ownerId) {
     const c = this.clients[id];
@@ -183,6 +188,36 @@ export class Store {
     c.history = [...(c.history || []), clean].slice(-100);
     this.#save();
     return clean;
+  }
+
+  /** Registro append-only e separado da atividade Nextcloud. */
+  appendSyncLog(id, entry) {
+    if (!ID_RE.test(id || '') || !this.clients[id]) return false;
+    const file = join(this.syncLogsDir, `${id}.jsonl`);
+    const allowed = new Set(['start', 'complete', 'error', 'download', 'upload', 'delete-local', 'delete-remote', 'conflict', 'mkdir-local', 'mkdir-remote']);
+    const clean = {
+      t: Date.now(), action: allowed.has(entry?.action) ? entry.action : 'error',
+      path: String(entry?.path || '').slice(0, 500), detail: String(entry?.detail || '').slice(0, 300),
+    };
+    if (entry?.requestId) clean.requestId = String(entry.requestId).slice(0, 36);
+    try {
+      appendFileSync(file, JSON.stringify(clean) + '\n', 'utf8');
+      return true;
+    } catch { return false; }
+  }
+
+  readSyncLog(id, limit = 300) {
+    if (!ID_RE.test(id || '') || !this.clients[id]) return [];
+    const file = join(this.syncLogsDir, `${id}.jsonl`);
+    const rows = [];
+    for (const source of [file + '.1', file]) {
+      if (!existsSync(source)) continue;
+      for (const line of readFileSync(source, 'utf8').split('\n')) {
+        if (!line) continue;
+        try { rows.push(JSON.parse(line)); } catch { /* linha parcial */ }
+      }
+    }
+    return rows.slice(-Math.max(1, Math.min(1_000_000, limit)));
   }
 
   /** Log técnico centralizado append-only, sem conteúdo de teclado/clipboard/arquivos. */

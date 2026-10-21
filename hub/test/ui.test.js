@@ -25,6 +25,22 @@ globalThis.RTCPeerConnection = class {
 
 const { buildSettingsPanel } = await import('../public/settings.js');
 const { Viewer } = await import('../public/viewer.js');
+const { buildMachineCard } = await import('../public/machines-ui.js');
+
+test('botao de atividade aparece so quando Nextcloud esta ativo e mostra arquivos sincronizados', () => {
+  const c = { id: 'c1', name: 'Recepcao', online: true, approved: true, settings: {}, history: [], nextcloud: { enabled: false } };
+  const ctx = { admin: true, send: () => {}, latestAgent: '', onPanel: () => {}, onAccess: () => {}, panel: null };
+  assert.equal([...buildMachineCard(c, ctx).querySelectorAll('.m-actions button')]
+    .some((b) => b.textContent.includes('Sincronização')), false);
+  c.nextcloud.enabled = true;
+  assert.equal([...buildMachineCard(c, ctx).querySelectorAll('.m-actions button')]
+    .some((b) => b.textContent.includes('Sincronização')), true);
+  const card = buildMachineCard(c, { ...ctx, panel: 'sync', syncLogs: new Map([['c1', { events: [
+    { t: Date.now(), action: 'download', path: 'UNICRED/AGENTS.md' },
+  ] }]]) });
+  assert.match(card.textContent, /UNICRED\/AGENTS\.md/);
+  assert.match(card.textContent, /Baixado do Nextcloud/);
+});
 
 const client = (over = {}) => ({
   id: 'c1', name: 'Recepcao', online: true, approved: true,
@@ -210,12 +226,8 @@ test('Mac US: Option e dead key geram texto composto uma vez, sem Alt remoto', a
   const v = new Viewer({ send: (m) => sent.push(m), isAdmin: () => true, onClosed: () => {} });
   v.open({ sessionId: 'mac-us', clientId: 'c1', name: 'X', iceServers: [] });
   v.switchToCompat('teste');
-  const environment = sent.find((m) => m.data?.event === 'input-environment')?.data;
-  assert.equal(environment?.browser, 'safari');
-  assert.equal(environment?.platform, 'mac');
-  assert.equal(typeof environment?.input, 'boolean');
-  assert.equal(typeof environment?.composition, 'boolean');
-  assert.equal(typeof environment?.layoutMap, 'boolean');
+  assert.equal(v.operatorBrowser, 'safari');
+  assert.equal(v.operatorPlatform, 'mac');
   v.textCapture.focus();
   const key = (key, code, altKey) => v.textCapture.dispatchEvent(new window.KeyboardEvent('keydown', { key, code, altKey, bubbles: true, cancelable: true }));
   key('Alt', 'AltLeft', true);
@@ -244,7 +256,7 @@ test('entrada: identifica familias de navegador e plataforma sem depender de API
     const v = new Viewer({ send: (m) => sent.push(m), isAdmin: () => true, onClosed: () => {} });
     v.open({ sessionId: 'browser-profile', clientId: 'c1', name: 'X', iceServers: [] });
     assert.deepEqual(
-      [sent.find((m) => m.data?.event === 'input-environment')?.data?.browser, v.operatorPlatform],
+      [v.operatorBrowser, v.operatorPlatform],
       [browser, platform],
     );
     v.close(false);
@@ -577,47 +589,25 @@ test('area de transferencia: no WebRTC, texto e Ctrl+V usam o mesmo canal ordena
   v.close(false);
 });
 
-test('pasta compartilhada substitui botoes avulsos e envia arquivos pelo modal', async () => {
+test('menu orb: botao Sincronizar Nextcloud dispara requisicao e pasta compartilhada foi removida', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts = {}) => {
     calls.push({ url, opts });
-    if (String(url).startsWith('/shared/manifest')) return { ok: true, json: async () => ({ files: [] }) };
-    return { ok: true, status: 201, json: async () => ({ size: 3 }) };
+    return { ok: true, json: async () => url.includes('/api/nextcloud/sync')
+      ? { accepted: true, requestId: 'req-1' }
+      : { nextcloud: { completedRequestId: 'req-1', lastChanges: 0 } } };
   };
   const v = new Viewer({ send: () => {}, isAdmin: () => true, onClosed: () => {} });
   v.open({ sessionId: 's-files', clientId: 'c1', name: 'X', iceServers: [] });
-  v.setClient(client({ sharedFolderSync: true }));
+  v.setClient(client());
   assert.equal(v.el.querySelector('[data-act=files]'), null);
   assert.equal(v.el.querySelector('[data-act=downloads]'), null);
-  assert.ok(v.el.querySelector('[data-act=shared]'));
-  await v.openSharedFolder();
-  assert.equal(v.sharedEl.hidden, false);
-  assert.ok(v.sharedFolderInput.hasAttribute('webkitdirectory'), 'seletor de pasta mantem estrutura no Safari/Chrome');
-  const file = new window.File(['abc'], 'relatorio.txt', { type: 'text/plain' });
-  await v.uploadSharedFiles([file]);
-  const upload = calls.find((c) => c.opts.method === 'PUT');
-  assert.equal(upload.url, '/shared/file?clientId=c1&path=relatorio.txt');
-  assert.equal(upload.opts.body, file);
-  const nested = new window.File(['x'], 'dados.txt', { type: 'text/plain' });
-  Object.defineProperty(nested, 'webkitRelativePath', { value: 'Projeto/sub/dados.txt' });
-  await v.uploadSharedFiles([nested], true);
-  assert.ok(calls.some((c) => c.opts.method === 'PUT' && c.url === '/shared/file?clientId=c1&path=Projeto%2Fsub%2Fdados.txt'));
-  v.sharedFiles = [
-    { path: 'Projeto/sub/dados.txt', size: 12, mtime: 1000 },
-    { path: 'Projeto/leia-me.md', size: 4, mtime: 2000 },
-    { path: 'raiz.pdf', size: 20, mtime: 3000 },
-  ];
-  v.navigateShared('');
-  assert.deepEqual([...v.sharedList.querySelectorAll('.vshared-name')].map((e) => e.textContent), ['Projeto', 'raiz.pdf'], 'raiz mostra somente filhos imediatos');
-  const folder = v.sharedList.querySelector('.vshared-row.folder');
-  folder.click();
-  assert.equal(v.sharedDownload.hidden, false);
-  assert.match(v.sharedDownload.textContent, /ZIP/);
-  folder.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true }));
-  assert.equal(v.sharedCurrentPath, 'Projeto');
-  assert.deepEqual([...v.sharedList.querySelectorAll('.vshared-name')].map((e) => e.textContent), ['sub', 'leia-me.md']);
-  assert.match(v.sharedBreadcrumb.textContent, /Recebimentos.*Projeto/);
+  assert.equal(v.el.querySelector('[data-act=shared]'), null, 'pasta compartilhada antiga deve estar removida');
+  const syncBtn = v.el.querySelector('[data-act=sync-nextcloud]');
+  assert.ok(syncBtn, 'botao Sincronizar Nextcloud deve existir no menu da bolinha');
+  await v.syncNextcloudNow();
+  assert.ok(calls.some((c) => c.url.includes('/api/nextcloud/sync') && c.opts.method === 'POST'));
   globalThis.fetch = previousFetch;
   v.close(false);
 });

@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +10,8 @@ import { Store } from './store.js';
 import { authenticateAgentEdge, iceServers } from './auth.js';
 import { Accounts } from './accounts.js';
 import { Updates, isHex64 } from './updates.js';
-import { createReadStream, createWriteStream, existsSync, statSync, unlinkSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { NextcloudSync, sanitizeNextcloudConfig } from './nextcloud.js';
+import { createReadStream, createWriteStream, existsSync, statSync, unlinkSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { basename, dirname, relative } from 'node:path';
 
 const PUBLIC_DIR = resolve(fileURLToPath(new URL('../public', import.meta.url)));
@@ -30,10 +31,8 @@ export function createHub(opts = {}) {
   if (soleOwnerId) store.assignUnowned(soleOwnerId);
   const updates = opts.updates || new Updates(config.updatesDir || join(config.dataDir, 'updates'));
   const transferDir = join(config.dataDir, 'transfers');
-  const sharedDir = join(config.dataDir, 'shared');
   const installerBaseDir = join(config.dataDir, 'installer-base');
   mkdirSync(transferDir, { recursive: true });
-  mkdirSync(sharedDir, { recursive: true });
   /** id -> { path, sessionId, clientId, operatorEmail, name, size, fromAgent, createdAt } */
   const transfers = new Map();
   /** clientId -> { ws, alive } */
@@ -42,6 +41,8 @@ export function createHub(opts = {}) {
   const sessions = new Map();
   /** operadores conectados (para broadcast da lista) */
   const operators = new Set();
+
+  const nextcloud = opts.nextcloud || new NextcloudSync({ store });
   /** Protege o hub contra agentes antigos que repetem a mesma falha em loop. */
   const agentLogThrottle = new Map();
   /** tickets de curta duracao: permitem ao navegador autenticado trocar o WebSocket para a LAN. */
@@ -87,54 +88,17 @@ export function createHub(opts = {}) {
         if (size > maxBytes) throw new Error('arquivo grande demais');
         if (!out.write(part)) await new Promise((resolve, reject) => { out.once('drain', resolve); out.once('error', reject); });
       }
-      await new Promise((resolve, reject) => out.end((e) => e ? reject(e) : resolve()));
+      await new Promise((resolve, reject) => {
+        out.once('error', reject);
+        out.once('close', resolve);
+        out.end();
+      });
       return size;
     } catch (e) {
       out.destroy();
       try { unlinkSync(path); } catch { /* parcial */ }
       throw e;
     }
-  };
-
-  // A pasta compartilhada nunca aceita um caminho arbitrario do HTTP. O identificador da
-  // maquina ja e validado pelo Store e o caminho final precisa continuar abaixo dela.
-  const sharedRoot = (clientId) => join(sharedDir, clientId);
-  const sharedPath = (clientId, raw) => {
-    if (!store.has(clientId) || typeof raw !== 'string' || raw.length < 1 || raw.length > 500) return null;
-    const root = resolve(sharedRoot(clientId));
-    const normalized = raw.replaceAll('\\', '/');
-    const parts = normalized.split('/');
-    // Alem de traversal, rejeita nomes que o Windows nao conseguiria materializar em recebimentos.
-    if (parts.some((part) => !part || part === '.' || part === '..' || /[<>:"|?*\x00-\x1f]/.test(part))) return null;
-    const target = resolve(root, normalized);
-    return target.startsWith(root + sep) ? target : null;
-  };
-  const sharedManifest = (clientId) => {
-    const root = sharedRoot(clientId);
-    if (!existsSync(root)) return [];
-    const out = [];
-    const visit = (dir) => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.name.startsWith('.transacao-')) continue;
-        const file = join(dir, entry.name);
-        if (entry.isDirectory()) visit(file);
-        else if (entry.isFile()) {
-          const st = statSync(file);
-          out.push({ path: relative(root, file).replaceAll('\\', '/'), size: st.size, mtime: st.mtimeMs });
-        }
-      }
-    };
-    visit(root);
-    return out.sort((a, b) => a.path.localeCompare(b.path));
-  };
-  const sharedAccess = async (req, clientId) => {
-    const user = account(req.headers);
-    if (user && accounts.owns(user.id, store.get(clientId))) return { operator: user };
-    const agentId = String(req.headers['x-client-id'] || '');
-    const agentOk = (await authenticateAgentEdge(req.headers))
-      && agentId === clientId
-      && !!store.authenticate(agentId, String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
-    return agentOk ? { agent: true } : null;
   };
 
   const publicClient = (c) => ({
@@ -146,6 +110,7 @@ export function createHub(opts = {}) {
     info: c.info,
     stats: agents.get(c.id)?.stats || null,
     settings: c.settings,
+    nextcloud: nextcloud.getPublicConfig(c.id),
     history: (c.history || []).slice(-30),
   });
 
@@ -170,8 +135,10 @@ export function createHub(opts = {}) {
       if (manual) send(entry.ws, { type: 'update-status', status: 'up-to-date' });
       return;
     }
-    if (!manual && Date.now() - (entry.lastOffer || 0) < 5 * 60_000) return; // nao insiste a cada instante
+    const isNewVersion = entry.lastOfferedHash !== meta.jarSha256;
+    if (!manual && !isNewVersion && Date.now() - (entry.lastOffer || 0) < 5 * 60_000) return; // nao insiste na mesma versao a cada instante
     entry.lastOffer = Date.now();
+    entry.lastOfferedHash = meta.jarSha256;
     if (store.markOffered(id, meta.jarSha256)) {
       store.addHistory(id, { type: 'offered', from: entry.jarSha256.slice(0, 8), to: meta.jarSha256.slice(0, 8) });
       broadcastClients();
@@ -263,62 +230,82 @@ export function createHub(opts = {}) {
       void zip.finalize();
       return;
     }
-    // Pasta compartilhada persistente por maquina. O navegador a administra, e o agente a
-    // sincroniza com <usuario>/recebimentos quando a opcao da maquina estiver ligada.
-    if (url.pathname === '/shared/manifest' && req.method === 'GET') {
+    // Configuracao e sincronizacao direta do Nextcloud (gerenciada no painel web)
+    if (url.pathname === '/api/nextcloud' || url.pathname === '/api/nextcloud/sync' || url.pathname === '/api/nextcloud/log') {
       const clientId = String(url.searchParams.get('clientId') || '');
-      if (!await sharedAccess(req, clientId)) { res.writeHead(403).end('forbidden'); return; }
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-        .end(JSON.stringify({ files: sharedManifest(clientId) }));
-      return;
-    }
-    if (url.pathname === '/shared/file') {
-      const clientId = String(url.searchParams.get('clientId') || '');
-      const path = sharedPath(clientId, String(url.searchParams.get('path') || ''));
-      if (!path || !await sharedAccess(req, clientId)) { res.writeHead(403).end('forbidden'); return; }
-      if (req.method === 'GET') {
-        if (!existsSync(path) || !statSync(path).isFile()) { res.writeHead(404).end('not found'); return; }
-        const st = statSync(path);
-        res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': st.size,
-          'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(basename(path))}`, 'cache-control': 'no-store' });
-        createReadStream(path).pipe(res);
+      const user = account(req.headers);
+      if (!user || !accounts.owns(user.id, store.get(clientId))) {
+        res.writeHead(403, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+          .end(JSON.stringify({ error: 'forbidden' }));
         return;
       }
-      if (req.method === 'DELETE') {
-        if (existsSync(path)) rmSync(path, { recursive: statSync(path).isDirectory(), force: true });
-        res.writeHead(204).end();
+      if (url.pathname === '/api/nextcloud' && req.method === 'GET') {
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+          .end(JSON.stringify({ nextcloud: nextcloud.getPublicConfig(clientId) }));
         return;
       }
-      if (req.method === 'PUT') {
-        mkdirSync(dirname(path), { recursive: true });
-        const temp = join(dirname(path), `.transacao-${randomUUID()}.upload`);
+      if (url.pathname === '/api/nextcloud/log' && req.method === 'GET') {
+        const limit = Math.max(1, Math.min(10000, Number(url.searchParams.get('limit')) || 300));
+        const rows = store.readSyncLog(clientId, limit + 1);
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+          .end(JSON.stringify({ events: rows.slice(-limit), hasMore: rows.length > limit }));
+        return;
+      }
+      if (url.pathname === '/api/nextcloud' && req.method === 'POST') {
+        let raw = '';
+        for await (const part of req) { raw += part; if (raw.length > 16_384) break; }
+        const body = (() => { try { return JSON.parse(raw); } catch { return {}; } })();
+        const current = store.get(clientId)?.nextcloud || {};
+        const candidate = sanitizeNextcloudConfig(body, current);
         try {
-          const size = await readUpload(req, temp);
-          renameSync(temp, path); // publicacao atomica: o agente nunca baixa arquivo parcial
-          res.writeHead(201, { 'content-type': 'application/json' }).end(JSON.stringify({ size }));
-        } catch { res.writeHead(413).end('upload failed'); }
+          if (candidate.enabled || body.testConnection) {
+            await nextcloud.testConfig(candidate);
+          }
+          store.updateNextcloud(clientId, body);
+          const fullCfg = store.get(clientId)?.nextcloud || candidate;
+          const agentWs = agents.get(clientId)?.ws;
+          if (agentWs && agentWs.readyState === 1) {
+            agentWs.send(JSON.stringify({ type: 'nextcloud-config', nextcloud: fullCfg }));
+          }
+          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+            .end(JSON.stringify({ ok: true, nextcloud: nextcloud.getPublicConfig(clientId) }));
+        } catch (e) {
+          res.writeHead(400, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+            .end(JSON.stringify({ error: e.message || 'Falha ao validar Nextcloud' }));
+        }
+        return;
+      }
+      if (url.pathname === '/api/nextcloud/sync' && req.method === 'POST') {
+        try {
+          const cfg = store.get(clientId)?.nextcloud;
+          if (!cfg?.enabled || !cfg.username || !cfg.appPassword) {
+            res.writeHead(400, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+              .end(JSON.stringify({ error: 'Configure e ative as credenciais do Nextcloud antes de sincronizar.' }));
+            return;
+          }
+          const agentWs = agents.get(clientId)?.ws;
+          if (!agentWs || agentWs.readyState !== 1) {
+            res.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+              .end(JSON.stringify({ error: 'Agente offline; não foi possível iniciar a sincronização.' }));
+            return;
+          }
+          if (nextcloud.hasPendingRequest(clientId)) {
+            res.writeHead(409, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+              .end(JSON.stringify({ error: 'Uma sincronização já foi solicitada; aguarde a conclusão.' }));
+            return;
+          }
+          const requestId = randomUUID();
+          agentWs.send(JSON.stringify({ type: 'sync-nextcloud', requestId }));
+          nextcloud.markRequested(clientId, requestId);
+          res.writeHead(202, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+            .end(JSON.stringify({ accepted: true, requestId, nextcloud: nextcloud.getPublicConfig(clientId) }));
+        } catch (e) {
+          res.writeHead(400, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+            .end(JSON.stringify({ error: e.message || 'Falha ao sincronizar com o Nextcloud', nextcloud: nextcloud.getPublicConfig(clientId) }));
+        }
         return;
       }
       res.writeHead(405).end('method not allowed');
-      return;
-    }
-    if (url.pathname === '/shared/archive' && req.method === 'GET') {
-      const clientId = String(url.searchParams.get('clientId') || '');
-      const path = sharedPath(clientId, String(url.searchParams.get('path') || ''));
-      if (!path || !await sharedAccess(req, clientId)) { res.writeHead(403).end('forbidden'); return; }
-      if (!existsSync(path) || !statSync(path).isDirectory()) { res.writeHead(404).end('not found'); return; }
-      const name = safeFileName(basename(path)) + '.zip';
-      res.writeHead(200, {
-        'content-type': 'application/zip',
-        'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
-        'cache-control': 'no-store',
-      });
-      const zip = archiver('zip', { zlib: { level: 9 } });
-      zip.on('warning', () => { /* entrada que desapareceu durante a compactacao: segue com as demais */ });
-      zip.on('error', () => { if (!res.destroyed) res.destroy(); });
-      zip.pipe(res);
-      zip.directory(path, basename(path));
-      void zip.finalize();
       return;
     }
     // Transferencia de arquivos: o hub so guarda o arquivo pelo tempo da sessao e entrega ao outro lado.
@@ -519,7 +506,7 @@ export function createHub(opts = {}) {
     agents.set(id, entry);
     ws.role = entry;
     store.update(id, { lastSeen: Date.now() });
-    if (client.approved) send(ws, { type: 'settings', settings: client.settings });
+    if (client.approved) send(ws, { type: 'settings', settings: client.settings, nextcloud: client.nextcloud || null });
     else send(ws, { type: 'pending' });
     broadcastClients();
 
@@ -645,6 +632,35 @@ export function createHub(opts = {}) {
               send(s.operatorWs, { type: 'file-status', sessionId, transferId, delivered });
               broadcastClients();
             }
+          } else if (msg.event === 'nextcloud-status') {
+            const d = msg.data || {};
+            nextcloud.setStatus(id, d);
+            if (d.syncing === true && !(Number.isInteger(d.processedFiles) && d.processedFiles > 0)) {
+              store.appendSyncLog(id, { action: 'start', requestId: d.requestId });
+              const key = `${id}:nextcloud:start`;
+              const now = Date.now();
+              if (d.requestId || now - (agentLogThrottle.get(key) || 0) >= 30 * 60_000) {
+                store.addHistory(id, { type: 'nextcloud', text: 'Sincronização Nextcloud iniciada.' });
+                agentLogThrottle.set(key, now);
+              }
+            } else if (d.syncing === false) {
+              store.appendSyncLog(id, { action: d.error ? 'error' : 'complete',
+                detail: d.error || `${Number(d.lastChanges) || 0} alteração(ões)`, requestId: d.requestId });
+              const key = `${id}:nextcloud:${String(d.error || 'ok').slice(0, 100)}`;
+              const now = Date.now();
+              const throttleMs = d.error ? 5 * 60_000 : 30 * 60_000;
+              if (d.requestId || now - (agentLogThrottle.get(key) || 0) >= throttleMs) {
+                const detail = d.error
+                  ? `Falha na sincronização Nextcloud: ${String(d.error).slice(0, 140)}`
+                  : `Sincronização Nextcloud concluída (${Number(d.lastChanges) || 0} alteração(ões)).`;
+                store.addHistory(id, { type: 'nextcloud', text: detail });
+                agentLogThrottle.set(key, now);
+              }
+            }
+            broadcastClients();
+          } else if (msg.event === 'nextcloud-activity') {
+            const d = msg.data || {};
+            store.appendSyncLog(id, d);
           } else if (msg.event === 'input-activity') {
             // Compatibilidade com agentes antigos: drena a fila sem persistir atividade de entrada.
             const d = msg.data || {};
@@ -693,7 +709,7 @@ export function createHub(opts = {}) {
           if (c) {
             const agent = agents.get(c.id);
             if (agent) {
-              send(agent.ws, { type: 'settings', settings: c.settings });
+              send(agent.ws, { type: 'settings', settings: c.settings, nextcloud: c.nextcloud || null });
               offerUpdate(c.id, agent);
             }
             broadcastClients();
@@ -715,7 +731,7 @@ export function createHub(opts = {}) {
           const c = store.update(msg.clientId, { name: msg.name, settings: msg.settings });
           if (c) {
             const agent = agents.get(c.id);
-            if (agent) send(agent.ws, { type: 'settings', settings: c.settings });
+            if (agent) send(agent.ws, { type: 'settings', settings: c.settings, nextcloud: c.nextcloud || null });
             broadcastClients();
           }
           break;
@@ -819,9 +835,11 @@ export function createHub(opts = {}) {
   return {
     server,
     store,
+    nextcloud,
     close() {
       clearInterval(pinger);
       clearInterval(updateTimer);
+      nextcloud.close();
       for (const ws of wss.clients) ws.terminate();
       server.close();
       server.closeAllConnections?.(); // conexoes HTTP persistentes (keep-alive) nao seguram o encerramento

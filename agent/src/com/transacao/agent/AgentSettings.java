@@ -10,7 +10,6 @@ final class AgentSettings {
     volatile boolean keepAwake = false;
     volatile boolean teamsWatcher = false;
     volatile boolean startWithSystem = true;
-    volatile boolean sharedFolderSync = true;
     volatile String quality = "auto";
     volatile boolean localOnly = false;
     volatile boolean webrtcEnabled = true;
@@ -68,7 +67,6 @@ final class AgentSettings {
         keepAwake = Json.bool(m, "keepAwake", keepAwake);
         teamsWatcher = Json.bool(m, "teamsWatcher", teamsWatcher);
         startWithSystem = Json.bool(m, "startWithSystem", startWithSystem);
-        sharedFolderSync = Json.bool(m, "sharedFolderSync", sharedFolderSync);
         localOnly = Json.bool(m, "localOnly", localOnly);
         webrtcEnabled = Json.bool(m, "webrtcEnabled", webrtcEnabled);
         nativeKeyboardHelper = Json.bool(m, "nativeKeyboardHelper", nativeKeyboardHelper);
