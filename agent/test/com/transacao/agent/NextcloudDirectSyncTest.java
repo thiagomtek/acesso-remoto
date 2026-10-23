@@ -22,6 +22,9 @@ public final class NextcloudDirectSyncTest {
         Path tmp = Files.createTempDirectory("nextcloud-sync-test-");
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         AtomicInteger downloads = new AtomicInteger();
+        AtomicInteger listings = new AtomicInteger();
+        AtomicBoolean remoteAccess = new AtomicBoolean(true);
+        AtomicReference<java.util.Map<String, Object>> lastStatus = new AtomicReference<>();
         AtomicInteger deletes = new AtomicInteger();
         AtomicInteger uploads = new AtomicInteger();
         AtomicBoolean remoteExists = new AtomicBoolean(true);
@@ -33,6 +36,7 @@ public final class NextcloudDirectSyncTest {
             byte[] body;
             int status;
             if ("PROPFIND".equals(method)) {
+                listings.incrementAndGet();
                 status = 207;
                 String date = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(
                         java.time.Instant.ofEpochMilli(remoteModified.get()).atZone(java.time.ZoneOffset.UTC));
@@ -73,7 +77,9 @@ public final class NextcloudDirectSyncTest {
             File cfgDir = tmp.resolve("config").toFile();
             cfgDir.mkdirs();
             AgentConfig cfg = new AgentConfig("", "", "", "", "", "", "", "", cfgDir);
-            sync = new NextcloudDirectSync(cfg, s -> {}, (event, data) -> {}, () -> false,
+            sync = new NextcloudDirectSync(cfg, s -> {}, (event, data) -> {
+                if ("nextcloud-status".equals(event)) lastStatus.set(data);
+            }, remoteAccess::get,
                     tmp.resolve("recebimentos").toFile(), false);
             set(sync, "enabled", true);
             set(sync, "url", "http://127.0.0.1:" + server.getAddress().getPort() + "/");
@@ -83,12 +89,21 @@ public final class NextcloudDirectSyncTest {
             Method tick = NextcloudDirectSync.class.getDeclaredMethod("tick");
             tick.setAccessible(true);
             tick.invoke(sync);
+            if (listings.get() != 0 || downloads.get() != 0) {
+                throw new AssertionError("Sincronizacao automatica concorreu com o video remoto");
+            }
+            set(sync, "pendingRequestId", "manual-1");
+            tick.invoke(sync);
+            if (listings.get() == 0 || downloads.get() == 0) {
+                throw new AssertionError("Pedido manual nao foi executado durante o video remoto");
+            }
             Path state = cfgDir.toPath().resolve("nextcloud-sync-state.properties");
             Properties partial = new Properties();
             if (Files.exists(state)) {
                 try (var input = Files.newInputStream(state)) { partial.load(input); }
             }
             if (partial.containsKey("keep.txt")) throw new AssertionError("Falha de download nao deve marcar o arquivo como sincronizado");
+            remoteAccess.set(false);
             tick.invoke(sync);
             if (deletes.get() != 0) throw new AssertionError("Arquivo remoto foi excluido apos falha temporaria");
             if (!"safe".equals(Files.readString(tmp.resolve("recebimentos/keep.txt")))) {

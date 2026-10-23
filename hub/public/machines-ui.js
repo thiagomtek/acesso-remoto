@@ -124,6 +124,7 @@ function buildHistory(c) {
 
 const SYNC_ACTIONS = {
   start: ['Sincronização iniciada', 'info', 'play'], complete: ['Sincronização concluída', 'ok', 'check'],
+  pause: ['Sincronização pausada para o vídeo', 'info', 'play'], resume: ['Sincronização retomada', 'info', 'play'],
   error: ['Falha na sincronização', 'bad', 'alert'], download: ['Baixado do Nextcloud', 'ok', 'down'],
   upload: ['Enviado ao Nextcloud', 'ok', 'up'], 'delete-local': ['Excluído nesta máquina', 'info', 'undo'],
   'delete-remote': ['Excluído do Nextcloud', 'info', 'undo'], conflict: ['Conflito preservado', 'bad', 'alert'],

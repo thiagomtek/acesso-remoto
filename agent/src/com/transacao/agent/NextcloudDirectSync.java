@@ -56,8 +56,8 @@ import java.util.regex.Pattern;
  */
 final class NextcloudDirectSync {
     static final long IDLE_SYNC_INTERVAL_MS = 60_000L;
-    static final long ACTIVE_REMOTE_CHECK_INTERVAL_MS = 45_000L;
-    static final long LOCAL_DEBOUNCE_MS = 2000L;
+    // A captura de video tem prioridade sobre a sincronizacao automatica. Um pedido
+    // manual do operador e explicito e, portanto, pode consumir recursos do video.
     private static final String DIR_KEY_PREFIX = "/dir:";
     private static final String SCOPE_KEY = "/sync-scope";
 
@@ -269,29 +269,25 @@ final class NextcloudDirectSync {
 
             long now = System.currentTimeMillis();
             boolean accessed = isMachineAccessed.getAsBoolean();
-            if (accessed) {
-                if (!wasAccessed) {
-                    wasAccessed = true;
-                    forceSyncRequested = true;
-                }
-                ensureWatcherOpen();
-                if (pollWatcherEvents()) {
-                    localChangeDetectedAt = now;
-                }
-            } else {
-                if (wasAccessed) {
-                    wasAccessed = false;
-                    closeWatcher();
-                    localChangeDetectedAt = 0;
-                }
+            // Um pedido com id vem do botao "Sincronizar agora". Ele deve ser
+            // atendido mesmo durante o acesso remoto; apenas as verificacoes
+            // automaticas aguardam o video terminar.
+            boolean manualRequest = pendingRequestId != null;
+            if (accessed && !manualRequest) {
+                wasAccessed = true;
+                closeWatcher();
+                return;
+            }
+            if (wasAccessed) {
+                wasAccessed = false;
+                forceSyncRequested = true;
+                localChangeDetectedAt = 0;
             }
 
             boolean dueForce = forceSyncRequested;
-            boolean dueLocal = accessed && localChangeDetectedAt > 0 && (now - localChangeDetectedAt >= LOCAL_DEBOUNCE_MS);
-            boolean dueActiveRemote = accessed && (now - lastRemoteCheckAt >= ACTIVE_REMOTE_CHECK_INTERVAL_MS);
-            boolean dueIdle = !accessed && (lastFullSyncAt == 0 || (now - lastFullSyncAt >= IDLE_SYNC_INTERVAL_MS));
+            boolean dueIdle = lastFullSyncAt == 0 || (now - lastFullSyncAt >= IDLE_SYNC_INTERVAL_MS);
 
-            if (!(dueForce || dueLocal || dueActiveRemote || dueIdle)) {
+            if (!(dueForce || dueIdle)) {
                 return;
             }
 
@@ -305,12 +301,14 @@ final class NextcloudDirectSync {
             pendingRequestId = null;
             reportStatus(true, 0, null, requestId);
 
+            awaitVideoIdle(requestId, manualRequest);
             RemoteSnapshot remoteSnap = listAllRemoteFiles(davRoot);
             this.lastRemoteSnapshot = remoteSnap;
             if (!remoteSnap.rootEtag.isEmpty()) {
                 this.lastRemoteEtag = remoteSnap.rootEtag;
             }
 
+            awaitVideoIdle(requestId, manualRequest);
             LocalSnapshot localSnap = scanLocal();
             Properties oldState = loadState();
             String scope = syncScope();
@@ -352,6 +350,7 @@ final class NextcloudDirectSync {
             int processed = 0;
             for (String path : allPaths) {
                 if (closed.get()) throw new IOException("Sincronizacao interrompida");
+                awaitVideoIdle(requestId, manualRequest);
                 if (!safe(path)) continue;
                 try {
                     Entry l = local.get(path);
@@ -441,6 +440,7 @@ final class NextcloudDirectSync {
 
             for (String dirPath : allDirsDesc) {
                 if (closed.get()) throw new IOException("Sincronizacao interrompida");
+                awaitVideoIdle(requestId, manualRequest);
                 if (!safe(dirPath)) continue;
                 try {
                     boolean inLocal = localDirs.contains(dirPath);
@@ -477,6 +477,7 @@ final class NextcloudDirectSync {
             allDirsAsc.sort(Comparator.comparingInt((String p) -> p.split("/").length).thenComparing(Comparator.naturalOrder()));
             for (String dirPath : allDirsAsc) {
                 if (closed.get()) throw new IOException("Sincronizacao interrompida");
+                awaitVideoIdle(requestId, manualRequest);
                 if (!safe(dirPath)) continue;
                 if (locallyDeletedDirs.contains(dirPath) || remotelyDeletedDirs.contains(dirPath)) continue;
                 try {
@@ -504,6 +505,7 @@ final class NextcloudDirectSync {
             }
 
             if (closed.get()) throw new IOException("Sincronizacao interrompida");
+            awaitVideoIdle(requestId, manualRequest);
             // Atualiza somente arquivos e pastas confirmados nos dois lados.
             LocalSnapshot finalLocal = scanLocal();
             RemoteSnapshot finalRemote = listAllRemoteFiles(davRoot);
@@ -580,6 +582,21 @@ final class NextcloudDirectSync {
         if (detail != null) data.put("detail", detail);
         if (requestId != null) data.put("requestId", requestId);
         statusReporter.accept("nextcloud-activity", data);
+    }
+
+    /** Aguarda o fim do video somente para a sincronizacao automatica. */
+    private void awaitVideoIdle(String requestId, boolean manualRequest) throws InterruptedException, IOException {
+        if (manualRequest) return;
+        boolean paused = false;
+        while (isMachineAccessed.getAsBoolean()) {
+            if (closed.get()) throw new IOException("Sincronizacao interrompida");
+            if (!paused) {
+                paused = true;
+                reportActivity("pause", "", "Acesso remoto ativo; aguardando para preservar o video.", requestId);
+            }
+            Thread.sleep(500);
+        }
+        if (paused) reportActivity("resume", "", "Acesso remoto encerrado; sincronizacao retomada.", requestId);
     }
 
     private String resolveDavRoot() throws Exception {

@@ -194,7 +194,7 @@ export class Store {
   appendSyncLog(id, entry) {
     if (!ID_RE.test(id || '') || !this.clients[id]) return false;
     const file = join(this.syncLogsDir, `${id}.jsonl`);
-    const allowed = new Set(['start', 'complete', 'error', 'download', 'upload', 'delete-local', 'delete-remote', 'conflict', 'mkdir-local', 'mkdir-remote']);
+    const allowed = new Set(['start', 'complete', 'error', 'pause', 'resume', 'download', 'upload', 'delete-local', 'delete-remote', 'conflict', 'mkdir-local', 'mkdir-remote']);
     const clean = {
       t: Date.now(), action: allowed.has(entry?.action) ? entry.action : 'error',
       path: String(entry?.path || '').slice(0, 500), detail: String(entry?.detail || '').slice(0, 300),

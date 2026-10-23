@@ -365,9 +365,6 @@ public final class AgentApp {
         Session s = new Session(id);
         sessions.put(id, s);
         refreshClipboard();
-        if (nextcloudSync != null) {
-            nextcloudSync.requestSync();
-        }
         // A bandeja e um identificador discreto do agente; nao revela para quem olhar a barra de
         // tarefas que existe uma sessao remota ativa. O estado operacional continua centralizado
         // no painel autenticado e nos logs tecnicos.
