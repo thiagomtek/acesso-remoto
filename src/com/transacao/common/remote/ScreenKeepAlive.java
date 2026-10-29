@@ -4,6 +4,8 @@ import java.awt.AWTException;
 import java.awt.MouseInfo;
 import java.awt.Point;
 import java.awt.Robot;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.function.Consumer;
@@ -59,36 +61,75 @@ public class ScreenKeepAlive implements Runnable {
         }
     }
 
-    // ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED, valido enquanto a
-    // thread do PowerShell viver; o laco sai (e o estado some) se o app pai morrer.
-    private void startHelper() {
+    // ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED (0x80000003, como
+    // UInt32 explicito: o literal hex vira Int32 negativo no PowerShell e a chamada
+    // falhava em silencio). Valido enquanto a thread do PowerShell viver; o laco sai
+    // se o app pai morrer. O auxiliar so imprime OK depois de confirmar que o
+    // Windows devolveu o estado recem-aplicado; qualquer erro imprime ERR e sai.
+    private boolean startHelper() {
         if (!System.getProperty("os.name", "").toLowerCase().contains("win")) {
-            return;
+            return false;
         }
+        Process p = null;
         try {
-            String script = "Add-Type -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern uint SetThreadExecutionState(uint f);' -Name K -Namespace W;"
+            String script = "$ProgressPreference='SilentlyContinue';try{"
+                    + "Add-Type -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern uint SetThreadExecutionState(uint f);' -Name K -Namespace W;"
+                    + "$f=[uint32]2147483651;"
+                    + "[void][W.K]::SetThreadExecutionState($f);"
+                    + "if([W.K]::SetThreadExecutionState($f) -ne $f){throw 'estado nao aplicado'}"
+                    + "'OK';"
                     + "$p=" + ProcessHandle.current().pid() + ";"
-                    + "while(Get-Process -Id $p -ErrorAction SilentlyContinue){[W.K]::SetThreadExecutionState(0x80000003)|Out-Null;Start-Sleep 30}";
+                    + "while(Get-Process -Id $p -ErrorAction Stop){[void][W.K]::SetThreadExecutionState($f);Start-Sleep 30}"
+                    + "}catch{'ERR '+$_.Exception.Message;exit 1}";
             String encoded = Base64.getEncoder().encodeToString(script.getBytes(StandardCharsets.UTF_16LE));
-            helper = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
-                    "-EncodedCommand", encoded)
+            p = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+                    "-OutputFormat", "Text", "-EncodedCommand", encoded)
                     .redirectErrorStream(true)
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                     .start();
-            if (logConsumer != null) {
-                logConsumer.accept("Keep-alive: SetThreadExecutionState ativo (sem teclas).");
+            final Process proc = p;
+            final java.util.concurrent.atomic.AtomicReference<String> first = new java.util.concurrent.atomic.AtomicReference<>();
+            final java.util.concurrent.CountDownLatch answered = new java.util.concurrent.CountDownLatch(1);
+            Thread reader = new Thread(() -> {
+                try (BufferedReader r = new BufferedReader(new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = r.readLine()) != null) {
+                        // ignora ruido (ex.: cabecalho CLIXML) ate a confirmacao ou o erro
+                        if (first.get() == null && (line.equals("OK") || line.startsWith("ERR"))) {
+                            first.set(line);
+                            answered.countDown();
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+            }, "keepalive-helper-reader");
+            reader.setDaemon(true);
+            reader.start();
+            answered.await(20, java.util.concurrent.TimeUnit.SECONDS);
+            if (!"OK".equals(first.get()) || !p.isAlive()) {
+                throw new IllegalStateException(first.get() != null ? first.get() : "sem confirmacao do auxiliar");
             }
+            helper = p;
+            if (logConsumer != null) {
+                logConsumer.accept("Keep-alive: SetThreadExecutionState confirmado (sem teclas).");
+            }
+            return true;
         } catch (Exception e) {
+            if (p != null) {
+                p.destroy();
+            }
             helper = null;
             if (logConsumer != null) {
                 logConsumer.accept("Keep-alive: auxiliar indisponivel, usando mouse (" + e.getMessage() + ").");
             }
+            return false;
         }
     }
 
     @Override
     public void run() {
-        startHelper();
+        if (!startHelper()) {
+            pulseMouse();
+        }
         while (running) {
             try {
                 Thread.sleep(intervalMs);
@@ -109,6 +150,15 @@ public class ScreenKeepAlive implements Runnable {
         if (helperAlive()) {
             return;
         }
+        // Auxiliar caiu (ou nunca subiu): tenta religar; enquanto nao confirmar,
+        // o pulso de mouse garante que o PC nao entra em suspensao.
+        if (running && startHelper()) {
+            return;
+        }
+        pulseMouse();
+    }
+
+    private void pulseMouse() {
         if (robot == null) {
             return;
         }
