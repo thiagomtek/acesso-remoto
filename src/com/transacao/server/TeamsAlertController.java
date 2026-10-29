@@ -5,6 +5,7 @@ import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.function.Consumer;
+import java.util.prefs.Preferences;
 
 /**
  * Alerta de atividade nova no Teams do client: em vez do beep, toca uma
@@ -21,6 +22,11 @@ public class TeamsAlertController implements UserPresenceMonitor.Listener {
     private static final int DEFAULT_AWAY_MINUTES = 5;
     private static final int SNOOZE_MINUTES = 30;
 
+    private static final String PREF_ENABLED = "teamsAlertEnabled";
+    private static final String PREF_IDLE_CHECK = "teamsAlertIdleCheck";
+    private static final String PREF_AWAY_MINUTES = "teamsAlertAwayMinutes";
+
+    private final Preferences prefs = Preferences.userNodeForPackage(TeamsAlertController.class);
     private final Consumer<String> log;
     private final SirenPlayer siren = new SirenPlayer();
     private final UserPresenceMonitor presence;
@@ -40,11 +46,21 @@ public class TeamsAlertController implements UserPresenceMonitor.Listener {
     public TeamsAlertController(Consumer<String> log) {
         this.log = log;
         siren.setErrorListener(log);
-        presence = new UserPresenceMonitor(DEFAULT_AWAY_MINUTES * 60_000L, this);
+        enabledCheck.setSelected(prefs.getBoolean(PREF_ENABLED, true));
+        checkIdleCheck.setSelected(prefs.getBoolean(PREF_IDLE_CHECK, true));
+        awayMinutesSpinner.setValue(prefs.getInt(PREF_AWAY_MINUTES, DEFAULT_AWAY_MINUTES));
+        presence = new UserPresenceMonitor(((Number) awayMinutesSpinner.getValue()).intValue() * 60_000L, this);
         presence.setErrorListener(log);
-        awayMinutesSpinner.addChangeListener(e ->
-                presence.setAwayAfterMs(((Number) awayMinutesSpinner.getValue()).intValue() * 60_000L));
-        checkIdleCheck.addActionListener(e -> awayMinutesSpinner.setEnabled(checkIdleCheck.isSelected()));
+        awayMinutesSpinner.addChangeListener(e -> {
+            int minutes = ((Number) awayMinutesSpinner.getValue()).intValue();
+            presence.setAwayAfterMs(minutes * 60_000L);
+            prefs.putInt(PREF_AWAY_MINUTES, minutes);
+        });
+        enabledCheck.addActionListener(e -> prefs.putBoolean(PREF_ENABLED, enabledCheck.isSelected()));
+        checkIdleCheck.addActionListener(e -> {
+            awayMinutesSpinner.setEnabled(checkIdleCheck.isSelected());
+            prefs.putBoolean(PREF_IDLE_CHECK, checkIdleCheck.isSelected());
+        });
         testButton.addActionListener(e -> showAlert("Teste da sirene."));
     }
 

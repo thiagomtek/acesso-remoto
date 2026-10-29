@@ -100,6 +100,9 @@ public final class AgentApp {
     private final com.transacao.server.SirenPlayer localSiren = new com.transacao.server.SirenPlayer(1.0);
     private static final long LOCAL_SIREN_MAX_MS = 60_000L;
     private volatile long localSirenToken;
+    /** A sirene local so toca com o operador ausente (sem mouse/teclado ha este tempo). */
+    private static final long LOCAL_SIREN_AWAY_MS = 5 * 60_000L;
+    private com.transacao.server.UserPresenceMonitor presence;
     private NextcloudDirectSync nextcloudSync;
     private TrayIcon tray;
     private volatile CheckboxMenuItem keepAwakeItem;
@@ -780,6 +783,8 @@ public final class AgentApp {
         }
         if (!settings.teamsLocalSiren) {
             stopLocalSiren("sirene local desativada pelo painel");
+        } else {
+            ensurePresenceMonitor();
         }
         // Iniciar com o sistema (so o usuario atual, sem admin e sem scripts)
         if (settings.startWithSystem != appliedAutostart) {
@@ -811,8 +816,35 @@ public final class AgentApp {
         showTrayMessage("Anti-suspensao", enabled ? "Ativado: o PC fica ligado e a tela ativa." : "Desativado.", TrayIcon.MessageType.INFO);
     }
 
+    /** Liga (uma vez) o detector de ausencia, cedo o bastante para ja ter lido o tempo ocioso do Windows. */
+    private synchronized void ensurePresenceMonitor() {
+        if (presence != null) {
+            return;
+        }
+        presence = new com.transacao.server.UserPresenceMonitor(LOCAL_SIREN_AWAY_MS,
+                new com.transacao.server.UserPresenceMonitor.Listener() {
+                    @Override
+                    public void onAway() {
+                        log("Operador ausente desta maquina (sem mouse/teclado).");
+                    }
+
+                    @Override
+                    public void onBack() {
+                        log("Operador voltou a esta maquina.");
+                        stopLocalSiren("operador voltou");
+                    }
+                });
+        presence.setErrorListener(this::log);
+        presence.start();
+    }
+
     private void startLocalSiren() {
         if (!settings.teamsLocalSiren || localSiren.isPlaying()) {
+            return;
+        }
+        ensurePresenceMonitor();
+        if (!presence.isAway()) {
+            log("Operador presente nesta maquina - sem sirene.");
             return;
         }
         localSiren.setErrorListener(this::log);
