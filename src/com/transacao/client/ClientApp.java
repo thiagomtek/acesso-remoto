@@ -63,7 +63,7 @@ public class ClientApp extends JFrame {
     private final JButton disconnectButton = new JButton("Desconectar");
     private final JButton discoverButton = new JButton("Buscar servidor na rede");
     private final JCheckBox startWithWindowsCheck = new JCheckBox("Iniciar com o Windows (neste usuario)");
-    private final JCheckBox keepAliveCheck = new JCheckBox("Manter computador ativo (anti-suspensao com mouse+CapsLock a cada 1 min)", false);
+    private final JCheckBox keepAliveCheck = new JCheckBox("Manter computador ativo (anti-suspensao sem usar teclado)", false);
     private final JCheckBox teamsWatcherCheck = new JCheckBox("Avisar sobre atividade no Teams (bandeja do Windows)", false);
     private final JButton chooseButton = new JButton("Selecionar arquivo .zip ou pasta...");
     private final JButton sendButton = new JButton("Enviar");
@@ -466,7 +466,7 @@ public class ClientApp extends JFrame {
         keepAliveThread = new Thread(keepAlive, "screen-keepalive");
         keepAliveThread.setDaemon(true);
         keepAliveThread.start();
-        log("Anti-suspensao ativo: simulando CapsLock a cada 5 minutos para evitar suspensao/inatividade.");
+        log("Anti-suspensao ativo: sem simular teclas, para evitar suspensao/inatividade.");
     }
 
     private void stopKeepAlive() {

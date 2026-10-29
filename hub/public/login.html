@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Acesso Remoto — Entrar</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#2563eb">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="stylesheet" href="login.css">
 </head>
 <body>
@@ -17,6 +20,7 @@
         <input id="email" name="email" type="email" required autocomplete="email" placeholder="nome@empresa.com">
         <label for="password">Senha</label>
         <div class="password-field"><input id="password" name="password" type="password" required minlength="7" autocomplete="current-password" placeholder="Sua senha"><button type="button" id="show-password" class="show">Mostrar</button></div>
+        <label class="remember" for="remember"><input id="remember" name="remember" type="checkbox" checked><span>Manter sessão conectada. A sessão não expira e dura para sempre, até você sair.</span></label>
         <p id="error" class="error" role="alert" hidden></p>
         <button class="primary" type="submit">Entrar</button>
         <div class="divider"><span>ou</span></div>

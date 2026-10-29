@@ -429,3 +429,53 @@ test('historico de atualizacao: versao, oferta, aplicando, falha e reversao fica
   op.close();
   hub.close();
 });
+
+test('PWA e push: arquivos publicos, inscricao por conta, aviso do Teams ao dono e teams-silence', async () => {
+  const sentPush = [];
+  const { PushService } = await import('../src/push.js');
+  const dir = mkdtempSync(join(tmpdir(), 'hub-push-'));
+  const push = new PushService(dir, { send: async (s, body) => { sentPush.push({ s, body: JSON.parse(body) }); } });
+  const { hub, base } = await setup({ push });
+  const http = base.replace(/^ws/, 'http');
+
+  // manifest, service worker e icones abrem sem login; o painel continua exigindo
+  for (const p of ['/manifest.webmanifest', '/sw.js', '/icons/icon-192.png']) assert.equal((await fetch(`${http}${p}`)).status, 200, p);
+  assert.equal((await fetch(`${http}/`, { redirect: 'manual' })).status, 302);
+  assert.equal((await fetch(`${http}/api/push/key`)).status, 401);
+
+  const auth = { cookie: operatorCookie, 'content-type': 'application/json' };
+  const key = await (await fetch(`${http}/api/push/key`, { headers: auth })).json();
+  assert.equal(key.publicKey, push.publicKey);
+  const sub = { endpoint: 'https://push.example/abc', keys: { p256dh: 'BPabc_-1', auth: 'xyz_-9' } };
+  assert.equal((await fetch(`${http}/api/push/subscribe`, { method: 'POST', headers: auth, body: JSON.stringify({ subscription: sub, label: 'Celular' }) })).status, 200);
+  assert.equal((await fetch(`${http}/api/push/subscribe`, { method: 'POST', headers: auth, body: JSON.stringify({ subscription: { endpoint: 'x' } }) })).status, 400);
+
+  const op = await connect(`${base}/operator`);
+  const id = randomUUID(); const token = randomBytes(32).toString('base64url');
+  const agent = new WebSocket(`${base}/agent`, { headers: agentHeaders(id, token, 'Recepcao') });
+  const pending = next(agent, (m) => m.type === 'pending');
+  await new Promise((resolve) => agent.once('open', resolve));
+  await pending;
+  const settings = next(agent, (m) => m.type === 'settings');
+  op.send(JSON.stringify({ type: 'approve-client', clientId: id }));
+  await settings;
+
+  const evt = next(op, (m) => m.type === 'client-event' && m.event === 'teams');
+  agent.send(JSON.stringify({ type: 'status', event: 'teams', data: { active: true } }));
+  await evt;
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(sentPush.length, 1);
+  assert.equal(sentPush[0].body.body, 'Recepcao');
+  assert.equal(sentPush[0].body.tag, `teams-${id}`);
+
+  // "lida" nao notifica de novo
+  agent.send(JSON.stringify({ type: 'status', event: 'teams', data: { active: false } }));
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(sentPush.length, 1);
+
+  const silence = next(agent, (m) => m.type === 'teams-silence');
+  op.send(JSON.stringify({ type: 'teams-silence' }));
+  await silence;
+
+  op.close(); agent.close(); hub.server.close();
+});

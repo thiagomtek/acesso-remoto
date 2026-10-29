@@ -3,7 +3,7 @@
 
 import { SNOOZE_MINUTES } from './teams-alert.js';
 
-export function mountTeamsUi(teams, root = document.body) {
+export function mountTeamsUi(teams, root = document.body, push = null) {
   const logLines = [];
   const slot = root.querySelector('#teams-slot');
   const card = document.createElement('div');
@@ -22,6 +22,15 @@ export function mountTeamsUi(teams, root = document.body) {
       <label class="opt">Considerar ausente após <input type="number" id="teams-away" min="1" max="240" style="width:5em"> min sem mexer no mouse/teclado</label>
       <div class="row"><button id="teams-idledetector" hidden>Detectar ausência do computador inteiro</button></div>
       <div class="sub">A sirene toca no volume máximo do navegador. Mantenha esta página aberta (pode ficar em segundo plano).</div>
+      <div class="teams-push" id="teams-push" hidden>
+        <div class="name">Notificações neste dispositivo</div>
+        <div class="sub" id="push-status"></div>
+        <div class="row">
+          <button id="push-toggle" type="button"></button>
+          <button id="push-test" type="button" hidden>Testar notificação</button>
+          <button id="push-install" type="button" hidden>Instalar aplicativo</button>
+        </div>
+      </div>
       <pre class="teams-log" id="teams-log"></pre>
     </div>`;
   let btn = null;
@@ -141,6 +150,41 @@ export function mountTeamsUi(teams, root = document.body) {
       try { new Notification(title, { body: 'Clique para abrir o painel', requireInteraction: true }); } catch { /* ignora */ }
     }
   };
+  if (push) mountPush(push);
   render();
   return { render, card, modal };
+
+  /** Notificacoes push (PWA): inscrever/cancelar este dispositivo, testar e instalar o app. */
+  function mountPush(p) {
+    q('teams-push').hidden = false;
+    const status = q('push-status');
+    const toggle = q('push-toggle');
+    const test = q('push-test');
+    const install = q('push-install');
+    let busy = false;
+    const refresh = async () => {
+      const st = await p.state();
+      toggle.disabled = busy || st === 'unsupported' || st === 'denied';
+      toggle.textContent = st === 'on' ? 'Desativar notificações' : 'Ativar notificações';
+      test.hidden = st !== 'on';
+      install.hidden = !p.installPrompt;
+      status.textContent = {
+        unsupported: p.ios && !p.installed
+          ? 'No iPhone/iPad: toque em Compartilhar › Adicionar à Tela de Início, abra o app instalado e ative aqui.'
+          : 'Este navegador não suporta notificações push.',
+        denied: 'Notificações bloqueadas no navegador. Libere nas configurações do site.',
+        on: 'Ativas: este dispositivo recebe o alerta do Teams mesmo com o painel fechado.',
+        off: 'Desativadas: ative para receber o alerta do Teams neste dispositivo, mesmo com o painel fechado.',
+      }[st];
+    };
+    p.onChange = refresh;
+    toggle.onclick = async () => {
+      busy = true; void refresh();
+      try { (await p.state()) === 'on' ? await p.disable() : await p.enable(); } catch (e) { teams.log(e.message); }
+      busy = false; void refresh();
+    };
+    test.onclick = async () => { const n = await p.test(); teams.log(n ? 'Notificação de teste enviada.' : 'Nenhum dispositivo recebeu o teste.'); };
+    install.onclick = () => p.install();
+    void refresh();
+  }
 }

@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS = {
   clipboardSync: true,
   keepAwake: false,
   teamsWatcher: false,
+  teamsLocalSiren: false,
   startWithSystem: true,
   quality: 'auto', // auto | max | balanced | economy
   localOnly: false,
@@ -24,6 +25,7 @@ const VALIDATORS = {
   clipboardSync: (v) => typeof v === 'boolean',
   keepAwake: (v) => typeof v === 'boolean',
   teamsWatcher: (v) => typeof v === 'boolean',
+  teamsLocalSiren: (v) => typeof v === 'boolean',
   startWithSystem: (v) => typeof v === 'boolean',
   quality: (v) => ['auto', 'max', 'balanced', 'economy'].includes(v),
   localOnly: (v) => typeof v === 'boolean',

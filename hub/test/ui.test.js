@@ -52,7 +52,7 @@ const stripTrace = ({ q, trace, ...command }) => command;
 test('painel de configuracoes: reflete o estado e envia a mudanca de cada campo', () => {
   const sent = [];
   const panel = buildSettingsPanel(client({ keepAwake: true }), { admin: true, send: (m) => sent.push(m) });
-  assert.equal(panel.querySelectorAll('input[type=checkbox]').length, 8);
+  assert.equal(panel.querySelectorAll('input[type=checkbox]').length, 9);
   assert.equal(labelOf(panel, 'anti-suspensão').querySelector('input').checked, true);
 
   const lo = labelOf(panel, 'rede local').querySelector('input');

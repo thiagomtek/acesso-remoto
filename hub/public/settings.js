@@ -12,6 +12,7 @@ export const SETTINGS = [
   ['clipboardSync', 'Sincronizar área de transferência'],
   ['keepAwake', 'Manter computador ativo (anti-suspensão)'],
   ['teamsWatcher', 'Avisar sobre atividade no Teams'],
+  ['teamsLocalSiren', 'Tocar sirene nesta máquina quando chegar atividade no Teams'],
 ];
 
 export const SETTINGS_GROUPS = [
@@ -36,6 +37,7 @@ export const SETTINGS_GROUPS = [
       ['clipboardSync', 'Sincronizar área de transferência'],
       ['keepAwake', 'Manter computador ativo (anti-suspensão)'],
       ['teamsWatcher', 'Avisar sobre atividade no Teams'],
+      ['teamsLocalSiren', 'Tocar sirene nesta máquina quando chegar atividade no Teams'],
     ],
   },
 ];

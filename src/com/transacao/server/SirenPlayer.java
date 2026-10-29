@@ -18,7 +18,7 @@ public class SirenPlayer {
     private static final double MAX_FREQ = 1350;
     /** Duracao de um ciclo completo (sobe e desce) da sirene. */
     private static final double SWEEP_PERIOD_S = 2.4;
-    private static final double VOLUME = 0.7;
+    private static final double DEFAULT_VOLUME = 0.7;
     /** Pedaco gerado por vez - pequeno para o stop() responder rapido. */
     private static final int CHUNK_FRAMES = 882; // 20 ms
 
@@ -26,6 +26,16 @@ public class SirenPlayer {
     private volatile boolean playing;
     private Thread thread;
     private volatile Consumer<String> errorListener;
+    private final double volume;
+
+    public SirenPlayer() {
+        this(DEFAULT_VOLUME);
+    }
+
+    /** @param volume amplitude de 0 a 1 (1 = maximo sem distorcer). */
+    public SirenPlayer(double volume) {
+        this.volume = Math.max(0, Math.min(1, volume));
+    }
 
     public void setErrorListener(Consumer<String> errorListener) {
         this.errorListener = errorListener;
@@ -80,7 +90,7 @@ public class SirenPlayer {
                     // Um pouco do 2o harmonico deixa o som mais "estridente", como sirene.
                     double sample = 0.75 * Math.sin(phase) + 0.25 * Math.sin(2 * phase);
                     double gain = frame < fadeInFrames ? (double) frame / fadeInFrames : 1.0;
-                    short value = (short) (sample * gain * VOLUME * Short.MAX_VALUE);
+                    short value = (short) (sample * gain * volume * Short.MAX_VALUE);
                     buffer[i * 2] = (byte) value;
                     buffer[i * 2 + 1] = (byte) (value >> 8);
                 }

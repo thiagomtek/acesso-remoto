@@ -58,9 +58,10 @@ export class Accounts {
     user.salt = salt.toString('base64'); user.passwordHash = digest.toString('base64'); this.save();
     return this.public(user);
   }
-  createSession(userId) {
+  createSession(userId, remember = false) {
     const token = randomBytes(32).toString('base64url');
-    this.data.sessions[hash(token)] = { userId, expiresAt: Date.now() + 7 * 86400_000 };
+    // "Manter conectado": sem expiracao no servidor (maior data valida do JS); so logout ou troca de senha encerram.
+    this.data.sessions[hash(token)] = { userId, expiresAt: remember ? 8.64e15 : Date.now() + 7 * 86400_000 };
     this.save();
     return token;
   }

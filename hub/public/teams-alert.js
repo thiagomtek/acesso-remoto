@@ -109,6 +109,7 @@ export class TeamsAlert {
     this.storage = storage;
     this.log = log;
     this.onChange = onChange;
+    this.onSilence = () => {}; // avisa as maquinas (sirene local) quando o operador pausa/silencia
     this.prefs = { ...DEFAULT_PREFS, ...this.load() };
     this.snoozedUntil = 0;
     this.lastInput = now();
@@ -202,6 +203,7 @@ export class TeamsAlert {
 
   /** "Pausar sirene e alerta". */
   pause() {
+    this.onSilence();
     if (this.audio.playing) {
       this.audio.stop();
       this.log('Sirene pausada pelo usuario.');

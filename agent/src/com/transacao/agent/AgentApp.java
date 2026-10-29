@@ -95,6 +95,10 @@ public final class AgentApp {
     private InputInjector injector;
     private ScreenKeepAlive keepAlive;
     private TeamsActivityWatcher teams;
+    /** Sirene tocada nesta maquina (volume maximo) quando chega atividade no Teams. */
+    private final com.transacao.server.SirenPlayer localSiren = new com.transacao.server.SirenPlayer(1.0);
+    private static final long LOCAL_SIREN_MAX_MS = 60_000L;
+    private volatile long localSirenToken;
     private NextcloudDirectSync nextcloudSync;
     private TrayIcon tray;
     private volatile String status = "Conectando...";
@@ -266,6 +270,9 @@ public final class AgentApp {
                         c.applySettings();
                     }
                 }
+                break;
+            case "teams-silence":
+                stopLocalSiren("pausada pelo operador");
                 break;
             case "nextcloud-config": {
                 Map<String, Object> ncConfig = Json.obj(m.get("nextcloud"));
@@ -748,6 +755,11 @@ public final class AgentApp {
                 msg.put("data", data);
                 hub.send(msg);
                 log(active ? "Atividade nova no Teams." : "Atividade do Teams voltou ao normal.");
+                if (active) {
+                    startLocalSiren();
+                } else {
+                    stopLocalSiren("atividade lida nesta maquina");
+                }
             });
             teams.setErrorListener(this::log);
             Thread t = new Thread(teams, "teams-activity-watcher");
@@ -757,7 +769,11 @@ public final class AgentApp {
         } else if (!settings.teamsWatcher && teams != null) {
             teams.stop();
             teams = null;
+            stopLocalSiren("monitoramento do Teams desativado");
             log("Monitoramento do Teams desativado pelo painel.");
+        }
+        if (!settings.teamsLocalSiren) {
+            stopLocalSiren("sirene local desativada pelo painel");
         }
         // Iniciar com o sistema (so o usuario atual, sem admin e sem scripts)
         if (settings.startWithSystem != appliedAutostart) {
@@ -769,6 +785,39 @@ public final class AgentApp {
             }
         }
         settings.saveLocal(new File(cfg.dir, "local-settings.properties"));
+    }
+
+    // ---------- sirene local do Teams ----------
+
+    private void startLocalSiren() {
+        if (!settings.teamsLocalSiren || localSiren.isPlaying()) {
+            return;
+        }
+        localSiren.setErrorListener(this::log);
+        localSiren.start();
+        log("Sirene do Teams tocando nesta maquina.");
+        final long token = ++localSirenToken;
+        Thread limit = new Thread(() -> {
+            try {
+                Thread.sleep(LOCAL_SIREN_MAX_MS);
+            } catch (InterruptedException e) {
+                return;
+            }
+            if (token == localSirenToken) {
+                stopLocalSiren("limite de " + (LOCAL_SIREN_MAX_MS / 1000) + " s");
+            }
+        }, "siren-limit");
+        limit.setDaemon(true);
+        limit.start();
+    }
+
+    private void stopLocalSiren(String reason) {
+        if (!localSiren.isPlaying()) {
+            return;
+        }
+        localSirenToken++;
+        localSiren.stop();
+        log("Sirene do Teams parada: " + reason + ".");
     }
 
     // ---------- bandeja / log ----------
@@ -783,6 +832,8 @@ public final class AgentApp {
             info.setEnabled(false);
             MenuItem update = new MenuItem("Atualizar");
             update.addActionListener(e -> requestManualUpdate());
+            MenuItem silence = new MenuItem("Parar sirene do Teams");
+            silence.addActionListener(e -> stopLocalSiren("pausada na bandeja"));
             MenuItem exit = new MenuItem("Sair");
             exit.addActionListener(e -> {
                 new Thread(() -> {
@@ -796,6 +847,7 @@ public final class AgentApp {
             popup.add(info);
             popup.addSeparator();
             popup.add(update);
+            popup.add(silence);
             popup.add(exit);
             tray = new TrayIcon(trayImage(), "Assistente", popup);
             tray.setImageAutoSize(true);

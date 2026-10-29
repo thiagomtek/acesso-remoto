@@ -32,6 +32,9 @@ export const config = {
   stunUrls: (env.STUN_URLS || 'stun:stun.l.google.com:19302').split(',').map((s) => s.trim()).filter(Boolean),
 
   // Cloudflare derruba WebSockets ociosos em ~100s: o keep-alive tem que ser bem menor.
+  // Contato VAPID das notificacoes push (https:// ou mailto:). Padrao: o primeiro host Tailscale.
+  pushSubject: env.PUSH_SUBJECT || ((env.TAILSCALE_HOSTS || '').split(',')[0].trim() ? `https://${(env.TAILSCALE_HOSTS || '').split(',')[0].trim()}` : 'mailto:admin@example.com'),
+
   pingIntervalMs: Number(env.PING_INTERVAL_MS || 25000),
 
   // Entrada LAN pelo Caddy do homelab. Nunca substitui a rota Cloudflare: e usada apenas quando

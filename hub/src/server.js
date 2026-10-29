@@ -11,6 +11,7 @@ import { authenticateAgentEdge, iceServers } from './auth.js';
 import { Accounts } from './accounts.js';
 import { Updates, isHex64 } from './updates.js';
 import { NextcloudSync, sanitizeNextcloudConfig } from './nextcloud.js';
+import { PushService } from './push.js';
 import { createReadStream, createWriteStream, existsSync, statSync, unlinkSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { basename, dirname, relative } from 'node:path';
 
@@ -20,7 +21,11 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.webmanifest': 'application/manifest+json',
 };
+// Arquivos do PWA sem dados sensiveis: o navegador os busca sem cookie (instalacao, atualizacao do service worker).
+const PWA_PUBLIC = new Set(['/manifest.webmanifest', '/sw.js', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon-maskable-512.png', '/icons/apple-touch-icon.png', '/icons/badge.png']);
 
 export function createHub(opts = {}) {
   const store = opts.store || new Store(config.dataDir);
@@ -42,6 +47,7 @@ export function createHub(opts = {}) {
   /** operadores conectados (para broadcast da lista) */
   const operators = new Set();
 
+  const push = opts.push || new PushService(config.dataDir, { subject: config.pushSubject });
   const nextcloud = opts.nextcloud || new NextcloudSync({ store });
   /** Protege o hub contra agentes antigos que repetem a mesma falha em loop. */
   const agentLogThrottle = new Map();
@@ -194,10 +200,36 @@ export function createHub(opts = {}) {
         if (!user) { res.writeHead(401).end(JSON.stringify({ error: 'credenciais-invalidas' })); return; }
         // Migra apenas a primeira conta: evita que um cadastro posterior capture máquinas existentes.
         if (registered && Object.keys(accounts.data.users).length === 1) store.assignUnowned(user.id);
-        const token = accounts.createSession(user.id);
-        res.writeHead(url.pathname === '/api/auth/register' ? 201 : 200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'set-cookie': `hub_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=604800` }).end(JSON.stringify({ user }));
+        const remember = body.remember === true;
+        const token = accounts.createSession(user.id, remember);
+        // Navegadores limitam Max-Age a ~400 dias; usamos esse teto para a sessao "para sempre".
+        const maxAge = remember ? 34_560_000 : 604_800;
+        res.writeHead(url.pathname === '/api/auth/register' ? 201 : 200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'set-cookie': `hub_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}` }).end(JSON.stringify({ user }));
       } catch (e) { res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message })); }
       return;
+    }
+    if (url.pathname.startsWith('/api/push/')) {
+      const user = account(req.headers);
+      const json = (code, obj) => res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(obj));
+      if (!user) return json(401, { error: 'nao-autenticado' });
+      if (url.pathname === '/api/push/key' && req.method === 'GET') return json(200, { publicKey: push.publicKey });
+      if (req.method !== 'POST') return json(405, { error: 'metodo' });
+      let raw = ''; for await (const part of req) { raw += part; if (raw.length > 16_384) break; }
+      const body = (() => { try { return JSON.parse(raw); } catch { return {}; } })();
+      if (url.pathname === '/api/push/subscribe') {
+        if (!push.subscribe(user.id, body.subscription, body.label)) return json(400, { error: 'inscricao-invalida' });
+        return json(200, { ok: true });
+      }
+      if (url.pathname === '/api/push/unsubscribe') {
+        push.unsubscribe(user.id, body.endpoint);
+        return json(200, { ok: true });
+      }
+      if (url.pathname === '/api/push/status') return json(200, { subscribed: push.has(user.id, body.endpoint), devices: push.count(user.id) });
+      if (url.pathname === '/api/push/test') {
+        const sent = await push.notify(user.id, { title: 'Teste de notificação', body: 'As notificações deste dispositivo estão funcionando.', tag: 'push-test', test: true }, { force: true });
+        return json(200, { sent });
+      }
+      return json(404, { error: 'nao-encontrado' });
     }
     // Instalador personalizado da conta. O ZIP base fica no volume persistente, fora da imagem;
     // somente agent.properties e refeito em memoria com uma matricula aleatoria de uso unico.
@@ -389,6 +421,13 @@ export function createHub(opts = {}) {
       }
       res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': statSync(file).size, 'cache-control': 'no-store' });
       createReadStream(file).pipe(res);
+      return;
+    }
+    if (PWA_PUBLIC.has(url.pathname)) {
+      try {
+        const body = await readFile(normalize(join(PUBLIC_DIR, url.pathname)));
+        res.writeHead(200, { 'content-type': MIME[extname(url.pathname)] || 'application/octet-stream', 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff' }).end(body);
+      } catch { res.writeHead(404).end(); }
       return;
     }
     if (url.pathname === '/login.html' || url.pathname === '/login.js' || url.pathname === '/login.css') {
@@ -667,7 +706,15 @@ export function createHub(opts = {}) {
             const activityId = typeof d.id === 'string' && /^[a-f0-9-]{36}$/i.test(d.id) ? d.id : '';
             if (activityId) send(ws, { type: 'input-activity-ack', id: activityId });
           }
-          for (const op of operators) send(op, { type: 'client-event', clientId: id, event: msg.event, data: msg.data });
+          if (msg.event === 'teams' && msg.data?.active === true) {
+            const owner = store.get(id)?.ownerId;
+            if (owner) {
+              const name = store.get(id)?.name || 'Máquina';
+              push.notify(owner, { title: 'Nova atividade no Teams', body: name, tag: `teams-${id}`, clientId: id }, { key: id }).catch(() => {});
+            }
+          }
+          // Eventos so para quem e dono da maquina.
+          for (const op of operators) if (accounts.owns(op.role?.user?.id, store.get(id))) send(op, { type: 'client-event', clientId: id, event: msg.event, data: msg.data });
           break;
       }
     });
@@ -702,6 +749,9 @@ export function createHub(opts = {}) {
       }
       const needAdmin = () => true;
       switch (msg.type) {
+        case 'teams-silence': // operador pausou o alerta: para a sirene local das suas maquinas
+          for (const [cid, a] of agents) if (accounts.owns(op.id, store.get(cid))) send(a.ws, { type: 'teams-silence' });
+          break;
         case 'approve-client': {
           if (!needAdmin()) return;
           if (!accounts.owns(op.id, store.get(msg.clientId))) { send(ws, { type: 'error', error: 'forbidden' }); return; }

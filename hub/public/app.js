@@ -3,6 +3,7 @@
 import { Viewer } from './viewer.js';
 import { TeamsAlert, WebAudioSiren } from './teams-alert.js';
 import { mountTeamsUi } from './teams-ui.js';
+import { PushClient } from './push-client.js';
 import { renderMachines, summarize, visibleClients } from './machines-ui.js';
 
 const $ = (id) => document.getElementById(id);
@@ -10,7 +11,10 @@ const store = (() => { try { return window.localStorage; } catch { return null; 
 
 // Alerta de atividade no Teams (sirene) - regra migrada do Servidor original
 const teams = new TeamsAlert({ audio: new WebAudioSiren(), storage: store });
-mountTeamsUi(teams);
+const push = new PushClient();
+void push.register();
+mountTeamsUi(teams, document.body, push);
+teams.onSilence = () => send({ type: 'teams-silence' });
 
 const viewer = new Viewer({ send: (m) => send(m), isAdmin: () => admin, onClosed: () => {} });
 let ws;

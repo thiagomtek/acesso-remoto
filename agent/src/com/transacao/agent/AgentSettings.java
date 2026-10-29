@@ -9,6 +9,7 @@ final class AgentSettings {
     volatile boolean clipboardSync = true;
     volatile boolean keepAwake = false;
     volatile boolean teamsWatcher = false;
+    volatile boolean teamsLocalSiren = false;
     volatile boolean startWithSystem = true;
     volatile String quality = "auto";
     volatile boolean localOnly = false;
@@ -66,6 +67,7 @@ final class AgentSettings {
         clipboardSync = Json.bool(m, "clipboardSync", clipboardSync);
         keepAwake = Json.bool(m, "keepAwake", keepAwake);
         teamsWatcher = Json.bool(m, "teamsWatcher", teamsWatcher);
+        teamsLocalSiren = Json.bool(m, "teamsLocalSiren", teamsLocalSiren);
         startWithSystem = Json.bool(m, "startWithSystem", startWithSystem);
         localOnly = Json.bool(m, "localOnly", localOnly);
         webrtcEnabled = Json.bool(m, "webrtcEnabled", webrtcEnabled);
