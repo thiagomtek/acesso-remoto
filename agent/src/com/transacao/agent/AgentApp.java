@@ -11,6 +11,7 @@ import dev.onvoid.webrtc.PeerConnectionFactory;
 import javax.swing.SwingUtilities;
 import java.awt.AWTException;
 import java.awt.BasicStroke;
+import java.awt.CheckboxMenuItem;
 import java.awt.Color;
 import java.awt.GradientPaint;
 import java.awt.Graphics2D;
@@ -101,6 +102,7 @@ public final class AgentApp {
     private volatile long localSirenToken;
     private NextcloudDirectSync nextcloudSync;
     private TrayIcon tray;
+    private volatile CheckboxMenuItem keepAwakeItem;
     private volatile String status = "Conectando...";
     // Locks separados: nenhum deles e segurado durante chamadas nativas do WebRTC nem durante log().
     private final Object sessionLock = new Object();
@@ -744,6 +746,10 @@ public final class AgentApp {
             keepAlive = null;
             log("Anti-suspensao desativado pelo painel.");
         }
+        CheckboxMenuItem keepAwakeMenu = keepAwakeItem;
+        if (keepAwakeMenu != null && keepAwakeMenu.getState() != settings.keepAwake) {
+            keepAwakeMenu.setState(settings.keepAwake);
+        }
         // Atividade no Teams (so avisa que houve; nao le o conteudo)
         if (settings.teamsWatcher && teams == null) {
             teams = new TeamsActivityWatcher(active -> {
@@ -789,6 +795,22 @@ public final class AgentApp {
 
     // ---------- sirene local do Teams ----------
 
+    /** Liga/desliga o anti-suspensao pela bandeja; avisa o hub para o painel refletir a mudanca. */
+    private void setKeepAwakeFromTray(boolean enabled) {
+        settings.keepAwake = enabled;
+        applySettings();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("enabled", enabled);
+        Map<String, Object> msg = new LinkedHashMap<>();
+        msg.put("type", "status");
+        msg.put("event", "set-keep-awake");
+        msg.put("data", data);
+        if (hub != null) {
+            hub.send(msg);
+        }
+        showTrayMessage("Anti-suspensao", enabled ? "Ativado: o PC fica ligado e a tela ativa." : "Desativado.", TrayIcon.MessageType.INFO);
+    }
+
     private void startLocalSiren() {
         if (!settings.teamsLocalSiren || localSiren.isPlaying()) {
             return;
@@ -832,6 +854,9 @@ public final class AgentApp {
             info.setEnabled(false);
             MenuItem update = new MenuItem("Atualizar");
             update.addActionListener(e -> requestManualUpdate());
+            CheckboxMenuItem keepAwakeMenu = new CheckboxMenuItem("Manter PC ligado e tela ativa", settings.keepAwake);
+            keepAwakeMenu.addItemListener(e -> setKeepAwakeFromTray(keepAwakeMenu.getState()));
+            keepAwakeItem = keepAwakeMenu;
             MenuItem silence = new MenuItem("Parar sirene do Teams");
             silence.addActionListener(e -> stopLocalSiren("pausada na bandeja"));
             MenuItem exit = new MenuItem("Sair");
@@ -846,6 +871,7 @@ public final class AgentApp {
             });
             popup.add(info);
             popup.addSeparator();
+            popup.add(keepAwakeMenu);
             popup.add(update);
             popup.add(silence);
             popup.add(exit);

@@ -634,6 +634,15 @@ export function createHub(opts = {}) {
               store.addHistory(id, map[msg.event]);
               broadcastClients();
             }
+          } else if (msg.event === 'set-keep-awake') {
+            // Pedido feito pelo menu da bandeja da propria maquina: o painel continua sendo a fonte da verdade.
+            if (store.get(id)?.approved && typeof msg.data?.enabled === 'boolean') {
+              const c = store.update(id, { settings: { keepAwake: msg.data.enabled } });
+              if (c) {
+                send(ws, { type: 'settings', settings: c.settings, nextcloud: c.nextcloud || null });
+                broadcastClients();
+              }
+            }
           } else if (msg.event === 'agent-diagnostic') {
             const d = msg.data || {};
             const code = typeof d.code === 'string' && /^[a-z0-9-]{1,32}$/.test(d.code) ? d.code : 'agent';
