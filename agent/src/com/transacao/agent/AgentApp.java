@@ -834,6 +834,7 @@ public final class AgentApp {
                         stopLocalSiren("operador voltou");
                     }
                 });
+        presence.setWatchAwtEvents(false);
         presence.setErrorListener(this::log);
         presence.start();
     }

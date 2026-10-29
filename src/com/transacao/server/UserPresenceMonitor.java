@@ -57,6 +57,7 @@ public class UserPresenceMonitor {
     private volatile long lastInputAt = System.currentTimeMillis();
     private volatile boolean away;
     private volatile boolean running;
+    private volatile boolean watchAwtEvents = true;
     private volatile Consumer<String> errorListener;
     private Point lastPointer;
     private Process idleProcess;
@@ -69,6 +70,11 @@ public class UserPresenceMonitor {
     /** Chamado quando a leitura do tempo ocioso do Windows falha, so para logar na UI. */
     public void setErrorListener(Consumer<String> errorListener) {
         this.errorListener = errorListener;
+    }
+
+    /** Desligue em apps sem janela (ex.: agente com icone de bandeja): o listener global do AWT atrapalha menus nativos. */
+    public void setWatchAwtEvents(boolean watchAwtEvents) {
+        this.watchAwtEvents = watchAwtEvents;
     }
 
     public void setAwayAfterMs(long awayAfterMs) {
@@ -89,9 +95,11 @@ public class UserPresenceMonitor {
             return;
         }
         running = true;
-        Toolkit.getDefaultToolkit().addAWTEventListener(e -> markActivity(),
-                AWTEvent.KEY_EVENT_MASK | AWTEvent.MOUSE_EVENT_MASK
-                        | AWTEvent.MOUSE_MOTION_EVENT_MASK | AWTEvent.MOUSE_WHEEL_EVENT_MASK);
+        if (watchAwtEvents) {
+            Toolkit.getDefaultToolkit().addAWTEventListener(e -> markActivity(),
+                    AWTEvent.KEY_EVENT_MASK | AWTEvent.MOUSE_EVENT_MASK
+                            | AWTEvent.MOUSE_MOTION_EVENT_MASK | AWTEvent.MOUSE_WHEEL_EVENT_MASK);
+        }
 
         if (System.getProperty("os.name", "").toLowerCase().contains("win")) {
             startWindowsIdleReader();
