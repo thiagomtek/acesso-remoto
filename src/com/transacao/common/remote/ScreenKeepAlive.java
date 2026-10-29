@@ -18,7 +18,7 @@ import java.util.function.Consumer;
  */
 public class ScreenKeepAlive implements Runnable {
 
-    private static final long DEFAULT_INTERVAL_MS = 5 * 60 * 1000L; // 5 minutos
+    private static final long DEFAULT_INTERVAL_MS = 3 * 60 * 1000L; // 3 minutos
 
     private final long intervalMs;
     private final Robot robot;
