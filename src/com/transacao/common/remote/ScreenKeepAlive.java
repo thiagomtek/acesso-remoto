@@ -64,8 +64,12 @@ public class ScreenKeepAlive implements Runnable {
     // ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED (0x80000003, como
     // UInt32 explicito: o literal hex vira Int32 negativo no PowerShell e a chamada
     // falhava em silencio). Valido enquanto a thread do PowerShell viver; o laco sai
-    // se o app pai morrer. O auxiliar so imprime OK depois de confirmar que o
-    // Windows devolveu o estado recem-aplicado; qualquer erro imprime ERR e sai.
+    // se o app pai morrer. A cada intervalo ele tambem envia um mouse_event de
+    // deslocamento zero: nao move o cursor nem digita, mas zera o tempo de
+    // inatividade de entrada (GetLastInputInfo) que o Teams usa para o status
+    // "Disponivel"; SetThreadExecutionState sozinho nao conta como entrada.
+    // O auxiliar so imprime OK depois de confirmar que o Windows devolveu o
+    // estado recem-aplicado; qualquer erro imprime ERR e sai.
     private boolean startHelper() {
         if (!System.getProperty("os.name", "").toLowerCase().contains("win")) {
             return false;
@@ -73,13 +77,16 @@ public class ScreenKeepAlive implements Runnable {
         Process p = null;
         try {
             String script = "$ProgressPreference='SilentlyContinue';try{"
-                    + "Add-Type -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern uint SetThreadExecutionState(uint f);' -Name K -Namespace W;"
+                    + "Add-Type -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern uint SetThreadExecutionState(uint f);"
+                    + " [DllImport(\"user32.dll\")] public static extern void mouse_event(uint f,int dx,int dy,uint d,UIntPtr e);' -Name K -Namespace W;"
                     + "$f=[uint32]2147483651;"
                     + "[void][W.K]::SetThreadExecutionState($f);"
                     + "if([W.K]::SetThreadExecutionState($f) -ne $f){throw 'estado nao aplicado'}"
                     + "'OK';"
                     + "$p=" + ProcessHandle.current().pid() + ";"
-                    + "while(Get-Process -Id $p -ErrorAction Stop){[void][W.K]::SetThreadExecutionState($f);Start-Sleep 30}"
+                    + "$n=0;while(Get-Process -Id $p -ErrorAction Stop){[void][W.K]::SetThreadExecutionState($f);"
+                    + "if($n % " + Math.max(1, intervalMs / 30_000L) + " -eq 0){[W.K]::mouse_event(1,0,0,0,[UIntPtr]::Zero)}"
+                    + ";$n++;Start-Sleep 30}"
                     + "}catch{'ERR '+$_.Exception.Message;exit 1}";
             String encoded = Base64.getEncoder().encodeToString(script.getBytes(StandardCharsets.UTF_16LE));
             p = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
