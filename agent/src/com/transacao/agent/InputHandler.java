@@ -32,6 +32,25 @@ final class InputHandler {
     private final Set<String> nativePhysicalDown = new HashSet<>();
     private boolean unicodeFallbackLogged;
 
+    // Diagnostico de entrada descartada pelo Windows (tela bloqueada, UAC, janela elevada). Compartilhado por
+    // todas as sessoes (um unico auxiliar PowerShell por agente) e executado fora da thread de entrada, para
+    // nunca atrasar um clique: no maximo uma consulta a cada PROBE_INTERVAL_MS.
+    private static final long PROBE_INTERVAL_MS = 5_000;
+    private static final long SAME_MESSAGE_MS = 2 * 60_000;
+    private static final long HELPER_FAILURE_MS = 30 * 60_000;
+    private static final boolean WINDOWS = System.getProperty("os.name", "").toLowerCase().contains("win");
+    private static final InputDiagnostics DIAGNOSTICS = new InputDiagnostics();
+    private static final java.util.concurrent.ExecutorService DIAGNOSTICS_EXECUTOR =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "input-diagnostics");
+                t.setDaemon(true);
+                return t;
+            });
+    private static final java.util.concurrent.atomic.AtomicBoolean PROBING = new java.util.concurrent.atomic.AtomicBoolean();
+    private static final Map<String, Long> LAST_REPORT_AT = new java.util.concurrent.ConcurrentHashMap<>();
+    private static volatile long lastProbeAt;
+    private static volatile long lastHelperFailureAt;
+
     /** @param afterInput chamado apos cada comando aplicado (ex.: acordar a captura para o resultado aparecer logo). */
     InputHandler(AgentSettings settings, InputSupplier input, ViewportListener viewport, Runnable afterInput,
                  Consumer<String> log) {
@@ -81,10 +100,12 @@ final class InputHandler {
             case "mm":
                 moveTo(Json.num(m, "x", 0), Json.num(m, "y", 0));
                 break;
-            case "md": // clique: posicao junto, para nunca cair atrasado num lugar errado
-                moveTo(Json.num(m, "x", 0), Json.num(m, "y", 0));
+            case "md": { // clique: posicao junto, para nunca cair atrasado num lugar errado
+                java.awt.Point target = moveTo(Json.num(m, "x", 0), Json.num(m, "y", 0));
                 in.mousePress(button(m));
+                checkClickEffect(target);
                 break;
+            }
             case "mu":
                 moveTo(Json.num(m, "x", 0), Json.num(m, "y", 0));
                 in.mouseRelease(button(m));
@@ -142,11 +163,74 @@ final class InputHandler {
         return "applied";
     }
 
-    private void moveTo(double nx, double ny) throws Exception {
+    private java.awt.Point moveTo(double nx, double ny) throws Exception {
         Rectangle lb = ScreenGeometry.logicalBounds();
         int x = lb.x + (int) Math.round(Math.max(0, Math.min(1, nx)) * (lb.width - 1));
         int y = lb.y + (int) Math.round(Math.max(0, Math.min(1, ny)) * (lb.height - 1));
         input.get().moveMouse(x, y);
+        return new java.awt.Point(x, y);
+    }
+
+    /**
+     * Apos um clique, procura sinais de que o Windows descartou a entrada. O {@code Robot} nao lanca erro
+     * nesse caso, entao sem isto a falha ficava invisivel. Nunca derruba nem atrasa o clique.
+     */
+    private void checkClickEffect(java.awt.Point target) {
+        try {
+            java.awt.PointerInfo pi = java.awt.MouseInfo.getPointerInfo();
+            if (pi != null && target != null) {
+                java.awt.Point now = pi.getLocation();
+                report("cursor", InputDiagnostics.explainCursor(target.x, target.y, now.x, now.y));
+            }
+        } catch (Throwable ignored) {
+            // melhor esforco
+        }
+        if (!WINDOWS || !settings.nativeKeyboardHelper) {
+            return; // sem PowerShell (ou maquina restrita): fica so a checagem do cursor
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastProbeAt < PROBE_INTERVAL_MS || !PROBING.compareAndSet(false, true)) {
+            return;
+        }
+        lastProbeAt = now;
+        try {
+            DIAGNOSTICS_EXECUTOR.execute(() -> {
+                try {
+                    InputDiagnostics.Probe probe = DIAGNOSTICS.query();
+                    String message = InputDiagnostics.explain(probe);
+                    if (message != null) {
+                        report(probe.desktopAccessible ? "uipi:" + probe.process : "desktop", message);
+                    }
+                    String failure = DIAGNOSTICS.takeFailure();
+                    if (failure != null && System.currentTimeMillis() - lastHelperFailureAt > HELPER_FAILURE_MS) {
+                        lastHelperFailureAt = System.currentTimeMillis();
+                        log.accept("Diagnostico de entrada indisponivel: falha ao iniciar o auxiliar (" + failure + ").");
+                    }
+                } catch (Throwable ignored) {
+                    // melhor esforco
+                } finally {
+                    PROBING.set(false);
+                }
+            });
+        } catch (RuntimeException e) {
+            PROBING.set(false);
+        }
+    }
+
+    /**
+     * Registra a mensagem no maximo uma vez a cada SAME_MESSAGE_MS por causa ({@code key}): a mesma causa se
+     * repete a cada clique e a mensagem pode trazer valores que variam (coordenadas).
+     */
+    private void report(String key, String message) {
+        if (message == null || key == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        Long previous = LAST_REPORT_AT.get(key);
+        if (previous == null || now - previous >= SAME_MESSAGE_MS) {
+            LAST_REPORT_AT.put(key, now);
+            log.accept(message);
+        }
     }
 
     /** Botao do navegador (0 esquerdo, 1 meio, 2 direito) para o do InputInjector (1, 2, 3). */
