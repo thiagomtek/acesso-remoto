@@ -54,7 +54,7 @@ java -cp "out;test-out;lib\*" com.transacao.agent.SystemStatsTest    # uso de CP
 | Arquivo | Conteúdo |
 |---|---|
 | `~/.remote-hub/remote-hub.env` | Cópia do `.env` do hub (instalado na VM em `/etc/hub-env/`). |
-| `~/.remote-hub/update-signing.key` | **Chave privada de assinatura das atualizações.** Se perder, é preciso reinstalar todos os agentes com uma chave pública nova. Faça backup. |
+| `~/.remote-hub/update-signing.key` | **Chave privada de assinatura das atualizações.** Se perder, é preciso reinstalar todos os agentes com uma chave pública nova. Desde a rotação de 24/11/2026 ela é gerada e usada no servidor Linux, com cópia em `/mnt/d/Servidores/Configuracoes/Atualizacao/update-signing.key` (coberta pelo restic). Publicação: `agent/publish-update.sh`. Ver `docs/ROTACAO-CHAVE-ATUALIZACAO.md`. |
 | `~/.transacao-agent/identity.properties` (por máquina) | ID e segredo do agente. |
 
 ## Instalação e auto-atualização (sem scripts)

@@ -39,12 +39,14 @@ import java.util.function.Consumer;
 final class AgentUpdater {
 
     /** Chave publica Ed25519 (X.509/DER em base64) usada para novas publicacoes. */
-    static final String PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEAeM1bg8KH2JhbwMtFVDYSWob6/CzsJ2lGyg0KZMgXYwo=";
+    static final String PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEABg+z1xR75bYgB6P2hPOi7a1dJO+2PwNRqFkJF65rcXM=";
     /**
      * Chave anterior, mantida apenas para a migracao. Assim, agentes instalados antes da rotacao
      * conseguem receber este pacote-ponte, e ele continua aceitando os pacotes da chave atual.
+     * (Rotacao de 24/11/2026: a chave privada da anterior foi perdida; esta continua aqui so porque
+     * a privada pode reaparecer, e nesse caso ainda assina pacotes validos.)
      */
-    static final String PREVIOUS_PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEAWqYmFVQE8MOgyS/bIxEgKAlondkBKNTgcD3qD318hSc=";
+    static final String PREVIOUS_PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEAeM1bg8KH2JhbwMtFVDYSWob6/CzsJ2lGyg0KZMgXYwo=";
 
     static final String MAIN_JAR = "transacao-agent.jar";
     static final String ALT_MAIN_JAR = "assistente.jar";
